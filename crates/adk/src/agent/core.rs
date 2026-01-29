@@ -11,13 +11,17 @@ use crate::tools::{ToolContext, ToolRegistry, ToolResult};
 use balungpisah_tensorzero::{
     InferenceRequestBuilder, InferenceResponse, TensorZeroClient, ToolChoice,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use super::builder::ModelSpec;
+
+/// Maximum length for auto-generated thread titles.
+const MAX_TITLE_LENGTH: usize = 50;
 
 /// An AI agent that can have conversations and use tools.
 pub struct Agent<S>
@@ -101,6 +105,11 @@ where
         Ok(self.storage.update_message(message).await?)
     }
 
+    /// Update a thread.
+    pub async fn update_thread(&self, thread: &Thread) -> Result<()> {
+        Ok(self.storage.update_thread(thread).await?)
+    }
+
     /// Delete a message.
     pub async fn delete_message(&self, message_id: Uuid) -> Result<()> {
         Ok(self.storage.delete_message(message_id).await?)
@@ -114,6 +123,284 @@ where
             .storage
             .delete_messages_after(thread_id, after_id)
             .await?)
+    }
+
+    /// Resolve or create a thread based on the request.
+    ///
+    /// Thread lifecycle:
+    /// - `thread_id = None`: Create new thread with auto-generated ID
+    /// - `thread_id = Some(id)` not found: Create thread with the provided ID (optimistic UI)
+    /// - `thread_id = Some(id)` found: Verify ownership and return existing thread
+    async fn resolve_thread(
+        &self,
+        external_id: &str,
+        thread_id: Option<Uuid>,
+        agent_slug: Option<&str>,
+        title: Option<&str>,
+        metadata: Option<Value>,
+    ) -> Result<Thread> {
+        match thread_id {
+            None => {
+                // Create new thread with auto-generated ID
+                let mut thread = Thread::new(external_id);
+                if let Some(slug) = agent_slug {
+                    thread = thread.with_agent_slug(slug);
+                }
+                if let Some(t) = title {
+                    thread = thread.with_title(t);
+                }
+                if let Some(m) = metadata {
+                    thread = thread.with_metadata(m);
+                }
+
+                self.storage.create_thread(&thread).await?;
+                info!(thread_id = %thread.id, "Created new thread");
+                Ok(thread)
+            }
+            Some(id) => {
+                // Check if thread exists
+                if let Some(existing) = self.storage.get_thread(id).await? {
+                    // Verify ownership
+                    if existing.external_id != external_id {
+                        return Err(AgentError::ThreadAccessDenied {
+                            thread_id: id,
+                            reason: "Thread belongs to another user".to_string(),
+                        });
+                    }
+                    debug!(thread_id = %id, "Using existing thread");
+                    Ok(existing)
+                } else {
+                    // Create thread with FE-provided ID (optimistic UI)
+                    let mut thread = Thread::with_id(id, external_id);
+                    if let Some(slug) = agent_slug {
+                        thread = thread.with_agent_slug(slug);
+                    }
+                    if let Some(t) = title {
+                        thread = thread.with_title(t);
+                    }
+                    if let Some(m) = metadata {
+                        thread = thread.with_metadata(m);
+                    }
+
+                    self.storage.create_thread(&thread).await?;
+                    info!(thread_id = %id, "Created thread with FE-provided ID (optimistic UI)");
+                    Ok(thread)
+                }
+            }
+        }
+    }
+
+    /// Resolve or create a user message based on the request.
+    ///
+    /// Message lifecycle:
+    /// - `user_message_id = None`: Create new message with auto-generated ID
+    /// - `user_message_id = Some(id)` not found: Create message with provided ID (optimistic UI)
+    /// - `user_message_id = Some(id)` found: Edit mode - update and delete messages after
+    async fn resolve_user_message(
+        &self,
+        thread_id: Uuid,
+        user_message_id: Option<Uuid>,
+        content: MessageContent,
+    ) -> Result<Message> {
+        match user_message_id {
+            None => {
+                // Create new message with auto-generated ID
+                let msg = Message::user(thread_id, content);
+                self.storage.create_message(&msg).await?;
+                debug!(message_id = %msg.id, "Created new user message");
+                Ok(msg)
+            }
+            Some(id) => {
+                // Check if message exists
+                if let Some(existing) = self.storage.get_message(id).await? {
+                    // Verify it belongs to this thread
+                    if existing.thread_id != thread_id {
+                        return Err(AgentError::MessageAccessDenied {
+                            message_id: id,
+                            reason: "Message belongs to another thread".to_string(),
+                        });
+                    }
+
+                    // Verify it's a user message
+                    if existing.role != Role::User {
+                        return Err(AgentError::MessageAccessDenied {
+                            message_id: id,
+                            reason: "Only user messages can be edited".to_string(),
+                        });
+                    }
+
+                    // Edit mode: delete all messages after this one
+                    let deleted = self.storage.delete_messages_after(thread_id, id).await?;
+                    info!(
+                        message_id = %id,
+                        deleted_count = deleted,
+                        "Edit mode: deleted messages after target"
+                    );
+
+                    // Update the message content
+                    let mut updated = existing;
+                    updated.content = content;
+                    updated.touch();
+                    self.storage.update_message(&updated).await?;
+
+                    Ok(updated)
+                } else {
+                    // Create message with FE-provided ID (optimistic UI)
+                    let msg = Message::user_with_id(id, thread_id, content);
+                    self.storage.create_message(&msg).await?;
+                    info!(message_id = %id, "Created message with FE-provided ID (optimistic UI)");
+                    Ok(msg)
+                }
+            }
+        }
+    }
+
+    /// Generate a title from message content.
+    fn generate_title(content: &MessageContent) -> Option<String> {
+        let text = match content {
+            MessageContent::Text(t) => t.clone(),
+            MessageContent::Blocks(blocks) => {
+                // Find first text block
+                blocks
+                    .iter()
+                    .find_map(|b| b.as_text().map(|s| s.to_string()))?
+            }
+        };
+
+        if text.is_empty() {
+            return None;
+        }
+
+        // Truncate to MAX_TITLE_LENGTH chars, preserving word boundaries
+        let title = if text.len() <= MAX_TITLE_LENGTH {
+            text
+        } else {
+            let truncated = &text[..MAX_TITLE_LENGTH];
+            // Try to find a word boundary
+            if let Some(pos) = truncated.rfind(char::is_whitespace) {
+                format!("{}...", &truncated[..pos])
+            } else {
+                format!("{}...", truncated)
+            }
+        };
+
+        Some(title)
+    }
+
+    /// Chat with the agent using a structured request.
+    ///
+    /// This is the main entry point that handles the full thread/message lifecycle:
+    /// - Thread creation/lookup with optimistic UI support
+    /// - Message creation/edit with optimistic UI support
+    /// - Auto-generated titles
+    ///
+    /// Returns a streaming response.
+    #[instrument(skip(self, request), fields(external_id = %external_id))]
+    pub async fn chat_with_request(
+        &self,
+        external_id: &str,
+        request: ChatRequest,
+    ) -> Result<ChatStreamResponse> {
+        // Check if this is the first message (for title generation)
+        let is_first_message = match request.thread_id {
+            None => true,
+            Some(id) => {
+                // Check if thread has any messages
+                if self.storage.get_thread(id).await?.is_some() {
+                    let messages = self.storage.get_thread_messages(id).await?;
+                    messages.is_empty()
+                } else {
+                    true // Thread doesn't exist yet
+                }
+            }
+        };
+
+        // Generate title from first message if needed
+        let title = if is_first_message {
+            Self::generate_title(&request.content)
+        } else {
+            None
+        };
+
+        // Resolve thread
+        let mut thread = self
+            .resolve_thread(
+                external_id,
+                request.thread_id,
+                request.agent_slug.as_deref(),
+                title.as_deref(),
+                request.metadata.clone(),
+            )
+            .await?;
+
+        // Update title if this is the first message and thread didn't have one
+        if is_first_message && thread.title.is_none() && title.is_some() {
+            thread.title = title;
+            self.storage.update_thread(&thread).await?;
+        }
+
+        // Resolve user message
+        let _user_msg = self
+            .resolve_user_message(thread.id, request.user_message_id, request.content.clone())
+            .await?;
+
+        // Start streaming
+        let (tx, rx) = mpsc::channel(self.stream_config.buffer_size);
+
+        let thread = Arc::new(thread);
+        let thread_id = thread.id;
+
+        // Create stream executor
+        let mut executor = StreamExecutor::new(
+            self.client.clone(),
+            self.storage.clone(),
+            self.tools.clone(),
+            self.model_spec.clone(),
+        )
+        .max_iterations(self.max_iterations)
+        .config(self.stream_config.clone());
+
+        // Pass all configurations
+        if let Some(ref config) = self.context_config {
+            executor = executor.context_config(config.clone());
+        }
+        if let Some(ref prompt) = self.system_prompt {
+            executor = executor.system_prompt(prompt.clone());
+        }
+        if let Some(ref creds) = self.credentials {
+            executor = executor.credentials(creds.clone());
+        }
+        if let Some(ref tags) = self.tags {
+            executor = executor.tags(tags.clone());
+        }
+        if let Some(ref choice) = self.tool_choice {
+            executor = executor.tool_choice(choice.clone());
+        }
+        if let Some(parallel) = self.parallel_tool_calls {
+            executor = executor.parallel_tool_calls(parallel);
+        }
+
+        // Spawn execution task
+        // Note: We pass the content for reference, but execute_without_saving will
+        // load messages from storage (which includes the message we just saved)
+        let content = request.content;
+        tokio::spawn(async move {
+            if let Err(e) = executor
+                .execute_without_saving(thread, content, tx.clone())
+                .await
+            {
+                let error_event = SseEvent::error("agent_error".to_string(), e.to_string());
+                if let Ok(sse_str) = error_event.to_sse_string() {
+                    let _ = tx.send(sse_str).await;
+                }
+            }
+        });
+
+        Ok(ChatStreamResponse {
+            thread_id,
+            user_message_id: request.user_message_id,
+            stream: rx,
+        })
     }
 
     /// Chat with the agent (non-streaming).
@@ -332,17 +619,17 @@ where
         results
     }
 
-    /// Chat with streaming response.
+    /// Chat with streaming response (simple version).
     ///
-    /// Returns a channel receiver that will emit SSE events as they occur.
+    /// Returns a channel receiver that will emit raw SSE-formatted strings.
     ///
-    /// Accepts either a simple string or structured `MessageContent` for multimodal input.
+    /// For full lifecycle support (thread/message creation), use `chat_with_request` instead.
     #[instrument(skip(self, content), fields(thread_id = %thread_id))]
     pub async fn chat_stream(
         &self,
         thread_id: Uuid,
         content: impl Into<MessageContent>,
-    ) -> Result<mpsc::Receiver<SseEvent>> {
+    ) -> Result<mpsc::Receiver<String>> {
         let thread = self
             .storage
             .get_thread(thread_id)
@@ -354,30 +641,54 @@ where
 
         let (tx, rx) = mpsc::channel(self.stream_config.buffer_size);
 
-        // Get model/function name for the executor
-        let model_or_function = match &self.model_spec {
-            ModelSpec::Function(name) => name.clone(),
-            ModelSpec::Model(name) => name.clone(),
-        };
-
-        // Create stream executor
+        // Create stream executor with full model spec and configuration
         let mut executor = StreamExecutor::new(
             self.client.clone(),
             self.storage.clone(),
             self.tools.clone(),
-            &model_or_function,
+            self.model_spec.clone(),
         )
         .max_iterations(self.max_iterations)
         .config(self.stream_config.clone());
 
+        // Pass context config
         if let Some(ref config) = self.context_config {
             executor = executor.context_config(config.clone());
+        }
+
+        // Pass system prompt
+        if let Some(ref prompt) = self.system_prompt {
+            executor = executor.system_prompt(prompt.clone());
+        }
+
+        // Pass credentials
+        if let Some(ref creds) = self.credentials {
+            executor = executor.credentials(creds.clone());
+        }
+
+        // Pass tags
+        if let Some(ref tags) = self.tags {
+            executor = executor.tags(tags.clone());
+        }
+
+        // Pass tool choice
+        if let Some(ref choice) = self.tool_choice {
+            executor = executor.tool_choice(choice.clone());
+        }
+
+        // Pass parallel tool calls setting
+        if let Some(parallel) = self.parallel_tool_calls {
+            executor = executor.parallel_tool_calls(parallel);
         }
 
         // Spawn execution task
         tokio::spawn(async move {
             if let Err(e) = executor.execute(thread, message_content, tx.clone()).await {
-                let _ = tx.send(SseEvent::error(e.to_string())).await;
+                // Send error as SSE-formatted string
+                let error_event = SseEvent::error("agent_error".to_string(), e.to_string());
+                if let Ok(sse_str) = error_event.to_sse_string() {
+                    let _ = tx.send(sse_str).await;
+                }
             }
         });
 
@@ -442,6 +753,16 @@ impl ChatResponse {
     }
 }
 
+/// Response from chat_with_request containing the stream and metadata.
+pub struct ChatStreamResponse {
+    /// The thread ID (may be newly created).
+    pub thread_id: Uuid,
+    /// The user message ID (if provided).
+    pub user_message_id: Option<Uuid>,
+    /// The SSE stream receiver.
+    pub stream: mpsc::Receiver<String>,
+}
+
 /// Token usage statistics.
 #[derive(Debug, Clone, Default)]
 pub struct Usage {
@@ -458,26 +779,76 @@ impl Usage {
     }
 }
 
-/// A simple chat request.
-#[derive(Debug, Clone)]
+/// A chat request with full lifecycle support.
+///
+/// ## Thread Lifecycle
+/// - `thread_id = None`: Create new thread with auto-generated ID
+/// - `thread_id = Some(id)` not found: Create thread with provided ID (optimistic UI)
+/// - `thread_id = Some(id)` found: Use existing thread (verifies ownership)
+///
+/// ## Message Lifecycle
+/// - `user_message_id = None`: Create new message with auto-generated ID
+/// - `user_message_id = Some(id)` not found: Create message with provided ID (optimistic UI)
+/// - `user_message_id = Some(id)` found: Edit mode - update and delete subsequent messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
-    /// The message text.
-    pub message: String,
-    /// Optional metadata for the message.
+    /// Message content (text or multimodal blocks).
+    pub content: MessageContent,
+
+    /// Optional thread ID.
+    /// - `None`: Create new thread
+    /// - `Some(id)`: Use existing or create with this ID (optimistic UI)
+    #[serde(default)]
+    pub thread_id: Option<Uuid>,
+
+    /// Optional user message ID for optimistic UI or edit mode.
+    /// - `None`: Auto-generate message ID
+    /// - `Some(id)` not found: Create with this ID (optimistic UI)
+    /// - `Some(id)` found: Edit mode - update message and delete all after it
+    #[serde(default)]
+    pub user_message_id: Option<Uuid>,
+
+    /// Optional agent slug for debugging/filtering.
+    #[serde(default)]
+    pub agent_slug: Option<String>,
+
+    /// Optional metadata for the thread/message.
+    #[serde(default)]
     pub metadata: Option<Value>,
 }
 
 impl ChatRequest {
-    /// Create a new chat request.
-    pub fn new(message: impl Into<String>) -> Self {
+    /// Create a new chat request with text content.
+    pub fn new(content: impl Into<MessageContent>) -> Self {
         Self {
-            message: message.into(),
+            content: content.into(),
+            thread_id: None,
+            user_message_id: None,
+            agent_slug: None,
             metadata: None,
         }
     }
 
-    /// Add metadata to the request.
-    pub fn with_metadata(mut self, metadata: Value) -> Self {
+    /// Set the thread ID.
+    pub fn thread_id(mut self, id: Uuid) -> Self {
+        self.thread_id = Some(id);
+        self
+    }
+
+    /// Set the user message ID.
+    pub fn user_message_id(mut self, id: Uuid) -> Self {
+        self.user_message_id = Some(id);
+        self
+    }
+
+    /// Set the agent slug.
+    pub fn agent_slug(mut self, slug: impl Into<String>) -> Self {
+        self.agent_slug = Some(slug.into());
+        self
+    }
+
+    /// Set metadata.
+    pub fn metadata(mut self, metadata: Value) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -491,7 +862,7 @@ impl From<String> for ChatRequest {
 
 impl From<&str> for ChatRequest {
     fn from(message: &str) -> Self {
-        Self::new(message)
+        Self::new(message.to_string())
     }
 }
 
