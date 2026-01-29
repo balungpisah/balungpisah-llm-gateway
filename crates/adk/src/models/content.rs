@@ -38,6 +38,22 @@ pub enum ContentBlock {
         /// Base64-encoded image data or URL.
         source: ImageSource,
     },
+
+    /// File content (images, documents, etc.).
+    File {
+        /// File ID for stored files (references files table).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        file_id: Option<String>,
+        /// Direct URL to the file.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
+        /// MIME type (e.g., "image/jpeg", "application/pdf").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// Base64-encoded file data.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+    },
 }
 
 impl ContentBlock {
@@ -96,6 +112,41 @@ impl ContentBlock {
     /// Check if this is a tool result block.
     pub fn is_tool_result(&self) -> bool {
         matches!(self, Self::ToolResult { .. })
+    }
+
+    /// Check if this is a file block.
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File { .. })
+    }
+
+    /// Create a file content block from base64-encoded data.
+    pub fn file_from_base64(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self::File {
+            file_id: None,
+            url: None,
+            mime_type: Some(mime_type.into()),
+            data: Some(data.into()),
+        }
+    }
+
+    /// Create a file content block from a URL.
+    pub fn file_from_url(url: impl Into<String>, mime_type: Option<String>) -> Self {
+        Self::File {
+            file_id: None,
+            url: Some(url.into()),
+            mime_type,
+            data: None,
+        }
+    }
+
+    /// Create a file content block from a stored file ID.
+    pub fn file_from_id(file_id: impl Into<String>, mime_type: Option<String>) -> Self {
+        Self::File {
+            file_id: Some(file_id.into()),
+            url: None,
+            mime_type,
+            data: None,
+        }
     }
 
     /// Get the text content if this is a text block.
@@ -172,6 +223,22 @@ impl MessageContent {
             Self::Text(text) => vec![ContentBlock::text(text)],
             Self::Blocks(blocks) => blocks.clone(),
         }
+    }
+
+    /// Convert to blocks format, normalizing text to a single text block.
+    ///
+    /// This ensures content is always stored as an array of content blocks,
+    /// which is required for multimodal support (text + files).
+    pub fn into_blocks(self) -> Self {
+        match self {
+            Self::Text(text) => Self::Blocks(vec![ContentBlock::text(text)]),
+            Self::Blocks(blocks) => Self::Blocks(blocks),
+        }
+    }
+
+    /// Check if this content is in blocks format.
+    pub fn is_blocks(&self) -> bool {
+        matches!(self, Self::Blocks(_))
     }
 
     /// Check if this content contains any tool uses.
