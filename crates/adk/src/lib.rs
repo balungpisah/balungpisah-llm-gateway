@@ -60,7 +60,7 @@ pub mod minio;
 
 /// Prelude module for convenient imports.
 pub mod prelude {
-    pub use crate::agent::{Agent, AgentBuilder, ChatRequest, ChatResponse};
+    pub use crate::agent::{Agent, AgentBuilder, ChatRequest, ChatResponse, ChatStreamResponse};
     pub use crate::context::{ContextConfig, ToolsConfig};
     pub use crate::error::{AgentError, Result, StorageError, ToolError};
     pub use crate::models::{
@@ -79,7 +79,9 @@ pub mod prelude {
 }
 
 // Re-export main types at crate root
-pub use agent::{Agent, AgentBuilder, ChatRequest, ChatResponse, Usage};
+pub use agent::{
+    Agent, AgentBuilder, ChatRequest, ChatResponse, ChatStreamResponse, ModelSpec, Usage,
+};
 pub use context::{ContextConfig, ToolsConfig};
 pub use error::{AgentError, Result, StorageError, ToolError};
 pub use models::{
