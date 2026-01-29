@@ -1,0 +1,34 @@
+# Rust
+/target
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Test databases
+*.db
+*.db-shm
+*.db-wal
+
+# Coverage
+*.profraw
+*.profdata
+
+
+node_modules/
+dist/
+
+docs/temp
