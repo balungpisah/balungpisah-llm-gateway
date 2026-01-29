@@ -209,7 +209,9 @@ impl ContextConfig {
             // If this is a user message with tool results, it's the end of a pair
             if msg.role == Role::User && self.is_tool_result_message(msg) {
                 // Find the preceding assistant message with tool calls
-                if i > 0 && messages[i - 1].role == Role::Assistant && messages[i - 1].has_tool_uses()
+                if i > 0
+                    && messages[i - 1].role == Role::Assistant
+                    && messages[i - 1].has_tool_uses()
                 {
                     tool_pair_count += 1;
                     if tool_pair_count > retain_last {
@@ -490,9 +492,17 @@ mod tests {
         let thread_id = Uuid::new_v4();
         let messages = vec![
             Message::new(thread_id, Role::User, MessageContent::text("First")),
-            Message::new(thread_id, Role::Assistant, MessageContent::text("Response 1")),
+            Message::new(
+                thread_id,
+                Role::Assistant,
+                MessageContent::text("Response 1"),
+            ),
             Message::new(thread_id, Role::User, MessageContent::text("Second")),
-            Message::new(thread_id, Role::Assistant, MessageContent::text("Response 2")),
+            Message::new(
+                thread_id,
+                Role::Assistant,
+                MessageContent::text("Response 2"),
+            ),
         ];
 
         let filtered = config.filter_messages(messages);
@@ -518,8 +528,16 @@ mod tests {
         let thread_id = Uuid::new_v4();
         let messages = vec![
             Message::new(thread_id, Role::User, MessageContent::text("First")),
-            Message::new(thread_id, Role::Assistant, MessageContent::text("Response 1")),
-            Message::new(thread_id, Role::Assistant, MessageContent::text("Response 2")),
+            Message::new(
+                thread_id,
+                Role::Assistant,
+                MessageContent::text("Response 1"),
+            ),
+            Message::new(
+                thread_id,
+                Role::Assistant,
+                MessageContent::text("Response 2"),
+            ),
             Message::new(thread_id, Role::User, MessageContent::text("Second")),
         ];
 

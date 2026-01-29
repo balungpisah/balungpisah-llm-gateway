@@ -88,9 +88,7 @@ pub struct ToolCallBlock {
 impl ToolCallBlock {
     /// Get the tool name, preferring validated name over raw_name.
     pub fn tool_name(&self) -> Option<&str> {
-        self.name
-            .as_deref()
-            .or(self.raw_name.as_deref())
+        self.name.as_deref().or(self.raw_name.as_deref())
     }
 
     /// Get the arguments as a Value.
