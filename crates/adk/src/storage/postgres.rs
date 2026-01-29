@@ -420,6 +420,33 @@ impl MessageStorage for PostgresStorage {
         Ok(messages)
     }
 
+    #[instrument(skip(self, message), fields(message_id = %message.id))]
+    async fn update_message(&self, message: &Message) -> StorageResult<()> {
+        debug!("Updating message");
+
+        let content_json =
+            serde_json::to_value(&message.content).map_err(|e| StorageError::Serialization {
+                message: e.to_string(),
+            })?;
+
+        sqlx::query(
+            r#"
+            UPDATE messages
+            SET role = $2, content = $3, inference_id = $4, episode_id = $5
+            WHERE id = $1
+            "#,
+        )
+        .bind(message.id)
+        .bind(message.role.to_string())
+        .bind(content_json)
+        .bind(message.inference_id)
+        .bind(message.episode_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     #[instrument(skip(self))]
     async fn delete_message(&self, id: Uuid) -> StorageResult<()> {
         debug!("Deleting message");
@@ -461,8 +488,8 @@ impl MessageStorage for PostgresStorage {
 #[async_trait]
 impl Storage for PostgresStorage {
     async fn migrate(&self) -> StorageResult<()> {
-        // Run embedded migrations
-        sqlx::query(include_str!("../../migrations/001_initial.sql"))
+        // Run embedded migrations using raw_sql to support multiple statements
+        sqlx::raw_sql(include_str!("../../migrations/001_initial.sql"))
             .execute(&self.pool)
             .await
             .map_err(|e| StorageError::Migration {

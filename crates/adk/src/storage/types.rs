@@ -51,6 +51,9 @@ pub trait MessageStorage: Send + Sync {
         limit: usize,
     ) -> StorageResult<Vec<Message>>;
 
+    /// Update a message.
+    async fn update_message(&self, message: &Message) -> StorageResult<()>;
+
     /// Delete a message.
     async fn delete_message(&self, id: Uuid) -> StorageResult<()>;
 
