@@ -40,6 +40,20 @@ pub enum AgentError {
     #[error("thread not found: {thread_id}")]
     ThreadNotFound { thread_id: uuid::Uuid },
 
+    /// Thread access denied.
+    #[error("thread access denied: {thread_id} - {reason}")]
+    ThreadAccessDenied {
+        thread_id: uuid::Uuid,
+        reason: String,
+    },
+
+    /// Message access denied.
+    #[error("message access denied: {message_id} - {reason}")]
+    MessageAccessDenied {
+        message_id: uuid::Uuid,
+        reason: String,
+    },
+
     /// Stream error.
     #[error("stream error: {message}")]
     Stream { message: String },
