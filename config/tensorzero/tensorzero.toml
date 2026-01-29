@@ -44,6 +44,27 @@ type = "openai"
 model_name = "gpt-4.1-nano"
 api_key_location = "dynamic::system_api_key"
 
+[models."gpt-5"]
+routing = ["openai"]
+[models."gpt-5".providers.openai]
+type = "openai"
+model_name = "gpt-5"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-5-mini"]
+routing = ["openai"]
+[models."gpt-5-mini".providers.openai]
+type = "openai"
+model_name = "gpt-5-mini"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-5-nano"]
+routing = ["openai"]
+[models."gpt-5-nano".providers.openai]
+type = "openai"
+model_name = "gpt-5-nano"
+api_key_location = "dynamic::system_api_key"
+
 # Anthropic Models
 [models."claude-sonnet-4-20250514"]
 routing = ["anthropic"]

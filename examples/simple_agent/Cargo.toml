@@ -12,3 +12,4 @@ tokio.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
