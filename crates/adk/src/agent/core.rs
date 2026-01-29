@@ -146,21 +146,7 @@ where
             None => return messages,
         };
 
-        // Apply max_messages limit
-        if messages.len() <= config.max_messages {
-            return messages;
-        }
-
-        // Keep the most recent messages
-        let start_idx = messages.len().saturating_sub(config.max_messages);
-        let mut filtered: Vec<_> = messages.into_iter().skip(start_idx).collect();
-
-        // Ensure we start with a user message
-        while !filtered.is_empty() && filtered[0].role == Role::Assistant {
-            filtered.remove(0);
-        }
-
-        filtered
+        config.filter_messages(messages)
     }
 
     /// Internal chat loop that handles tool execution.
@@ -379,10 +365,7 @@ where
         .config(self.stream_config.clone());
 
         if let Some(ref config) = self.context_config {
-            // Convert ContextConfig to ContextFilter for backward compatibility
-            // TODO: Update StreamExecutor to use ContextConfig directly
-            let filter = crate::context::ContextFilter::new().max_messages(config.max_messages);
-            executor = executor.context_filter(filter);
+            executor = executor.context_config(config.clone());
         }
 
         // Spawn execution task

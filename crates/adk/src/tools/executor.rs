@@ -68,6 +68,9 @@ impl FnToolExecutor {
                     if result.tool_call_id.is_empty() {
                         result.tool_call_id = ctx.tool_call_id;
                     }
+                    if result.tool_name.is_empty() {
+                        result.tool_name = ctx.tool_name;
+                    }
                     result
                 })
             }),

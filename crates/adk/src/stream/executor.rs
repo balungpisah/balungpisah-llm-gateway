@@ -2,7 +2,7 @@
 
 use super::config::StreamConfig;
 use super::events::SseEvent;
-use crate::context::ContextFilter;
+use crate::context::ContextConfig;
 use crate::error::{AgentError, Result};
 use crate::models::{ContentBlock, Message, MessageContent, Role, Thread};
 use crate::storage::{MessageStorage, ThreadStorage};
@@ -37,8 +37,8 @@ where
     max_iterations: usize,
     /// Stream configuration.
     config: StreamConfig,
-    /// Context filter.
-    context_filter: Option<ContextFilter>,
+    /// Context configuration.
+    context_config: Option<ContextConfig>,
 }
 
 impl<S> std::fmt::Debug for StreamExecutor<S>
@@ -72,7 +72,7 @@ where
             function_name: function_name.into(),
             max_iterations: 10,
             config: StreamConfig::default(),
-            context_filter: None,
+            context_config: None,
         }
     }
 
@@ -88,9 +88,9 @@ where
         self
     }
 
-    /// Set context filter.
-    pub fn context_filter(mut self, filter: ContextFilter) -> Self {
-        self.context_filter = Some(filter);
+    /// Set context configuration.
+    pub fn context_config(mut self, config: ContextConfig) -> Self {
+        self.context_config = Some(config);
         self
     }
 
@@ -386,9 +386,9 @@ where
     async fn build_context_messages(&self, thread: &Thread) -> Result<Vec<InputMessage>> {
         let stored_messages = self.storage.get_thread_messages(thread.id).await?;
 
-        // Apply context filter if configured
-        let messages = if let Some(ref filter) = self.context_filter {
-            filter.filter_messages(stored_messages)
+        // Apply context config if configured
+        let messages = if let Some(ref config) = self.context_config {
+            config.filter_messages(stored_messages)
         } else {
             stored_messages
         };

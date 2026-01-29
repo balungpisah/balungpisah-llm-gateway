@@ -28,7 +28,7 @@
 
 use balungpisah_adk::{
     AgentBuilder, ContextConfig, PostgresConfig, PostgresStorage, Storage, TensorZeroClient,
-    ToolChoice, ToolContext, ToolDefinition, ToolRegistry, ToolResult, ToolsContextConfig,
+    ToolChoice, ToolContext, ToolDefinition, ToolRegistry, ToolResult, ToolsConfig,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -146,7 +146,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let context_config = ContextConfig::new()
         .max_messages(20)
         .tools(
-            ToolsContextConfig::new()
+            ToolsConfig::new()
                 .retain_last(5)
                 .limit_per_message(3),
         )
@@ -154,7 +154,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             // Use more aggressive context limits during tool loops
             ContextConfig::new()
                 .max_messages(5)
-                .tools(ToolsContextConfig::new().retain_last(2)),
+                .tools(ToolsConfig::new().retain_last(2)),
         );
 
     // Build the agent with either function_name or model_name
