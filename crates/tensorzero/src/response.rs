@@ -182,32 +182,86 @@ impl JsonInferenceResponse {
     }
 }
 
-/// Streaming event from TensorZero.
+/// Streaming chunk from TensorZero.
+///
+/// TensorZero sends each SSE event as a complete JSON chunk containing
+/// inference_id, episode_id, variant_name, content array, and optionally usage.
+/// This is simpler than Anthropic's content_block_start/delta/stop pattern.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamEvent {
-    /// Initial chunk with IDs.
-    Chunk(ChunkEvent),
-    /// Content block start.
-    ContentBlockStart(ContentBlockStartEvent),
-    /// Content block delta.
-    ContentBlockDelta(ContentBlockDeltaEvent),
-    /// Content block stop.
-    ContentBlockStop(ContentBlockStopEvent),
-    /// Stream finished.
-    Done(DoneEvent),
-}
-
-/// Initial chunk event with inference and episode IDs.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ChunkEvent {
+pub struct StreamEvent {
     /// Inference ID for this request.
     pub inference_id: Uuid,
     /// Episode ID for conversation tracking.
     pub episode_id: Uuid,
+    /// Variant name used for inference.
+    pub variant_name: String,
+    /// Content blocks (deltas) in this chunk.
+    pub content: Vec<StreamContentBlock>,
+    /// Usage statistics (usually present in final chunks).
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
-/// Start of a content block.
+/// Content block in a streaming chunk.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamContentBlock {
+    /// Text content delta.
+    Text {
+        /// Block ID.
+        id: String,
+        /// Text delta.
+        text: String,
+    },
+    /// Tool call delta.
+    ToolCall {
+        /// Tool call ID.
+        id: String,
+        /// Raw name of the tool (may be partial).
+        raw_name: String,
+        /// Raw arguments string delta.
+        raw_arguments: String,
+    },
+    /// Thought content delta (from reasoning models).
+    Thought {
+        /// Block ID.
+        id: String,
+        /// Thought text delta.
+        #[serde(default)]
+        text: Option<String>,
+        /// Signature (usually comes at the end).
+        #[serde(default)]
+        signature: Option<String>,
+    },
+}
+
+impl StreamContentBlock {
+    /// Get the block ID.
+    pub fn id(&self) -> &str {
+        match self {
+            StreamContentBlock::Text { id, .. } => id,
+            StreamContentBlock::ToolCall { id, .. } => id,
+            StreamContentBlock::Thought { id, .. } => id,
+        }
+    }
+
+    /// Get the block type as a string.
+    pub fn block_type(&self) -> &'static str {
+        match self {
+            StreamContentBlock::Text { .. } => "text",
+            StreamContentBlock::ToolCall { .. } => "tool_call",
+            StreamContentBlock::Thought { .. } => "thought",
+        }
+    }
+}
+
+// Legacy type aliases for backward compatibility during migration
+// TODO: Remove these after updating executor.rs
+
+/// Legacy: Initial chunk event (now just StreamEvent).
+pub type ChunkEvent = StreamEvent;
+
+/// Legacy: Content block start event.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentBlockStartEvent {
     /// Index of this content block.
@@ -216,7 +270,7 @@ pub struct ContentBlockStartEvent {
     pub content_block: ContentBlockType,
 }
 
-/// Type of content block being streamed.
+/// Legacy: Type of content block being streamed.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlockType {
@@ -226,15 +280,15 @@ pub enum ContentBlockType {
     ToolCall(StreamToolCall),
 }
 
-/// Tool call in streaming response content block start.
+/// Legacy: Tool call in streaming response.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamToolCall {
     /// Unique ID for this tool call.
     pub id: String,
-    /// Raw name of the tool (may be partial in streaming).
+    /// Raw name of the tool.
     #[serde(default)]
     pub raw_name: Option<String>,
-    /// Raw arguments as a string (may be partial in streaming).
+    /// Raw arguments as a string.
     #[serde(default)]
     pub raw_arguments: Option<String>,
     /// Name of the tool (for compatibility).
@@ -245,7 +299,7 @@ pub struct StreamToolCall {
     pub arguments: Option<String>,
 }
 
-/// Delta update for a content block.
+/// Legacy: Delta update for a content block.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentBlockDeltaEvent {
     /// Index of the content block being updated.
@@ -254,7 +308,7 @@ pub struct ContentBlockDeltaEvent {
     pub delta: Delta,
 }
 
-/// Delta content types.
+/// Legacy: Delta content types.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
@@ -264,14 +318,14 @@ pub enum Delta {
     ToolCallDelta { arguments: String },
 }
 
-/// End of a content block.
+/// Legacy: End of a content block.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentBlockStopEvent {
     /// Index of the finished content block.
     pub index: usize,
 }
 
-/// Stream finished event.
+/// Legacy: Stream finished event.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DoneEvent {
     /// Usage statistics for the complete response.

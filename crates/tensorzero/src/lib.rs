@@ -41,5 +41,5 @@ pub use request::{
 pub use response::{
     ChunkEvent, ContentBlock, ContentBlockDeltaEvent, ContentBlockStartEvent,
     ContentBlockStopEvent, ContentBlockType, Delta, DoneEvent, InferenceResponse,
-    JsonInferenceResponse, Output, StreamEvent, ToolCallBlock, Usage,
+    JsonInferenceResponse, Output, StreamContentBlock, StreamEvent, ToolCallBlock, Usage,
 };

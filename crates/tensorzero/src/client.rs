@@ -7,7 +7,7 @@ use eventsource_stream::Eventsource;
 use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use std::pin::Pin;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 
 /// Client for interacting with TensorZero inference gateway.
 #[derive(Clone)]
@@ -209,9 +209,9 @@ impl TensorZeroClient {
                         match serde_json::from_str::<StreamEvent>(&event.data) {
                             Ok(stream_event) => Some(Ok(stream_event)),
                             Err(e) => {
-                                // Log parse errors but continue processing
-                                debug!(
-                                    "Failed to parse stream event: {} - data: {}",
+                                // Log parse errors at warn level for diagnostics
+                                warn!(
+                                    "Failed to parse stream event: {} - raw data: {}",
                                     e, event.data
                                 );
                                 None
