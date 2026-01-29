@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg17
+    container_name: balungpisah-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agents}
+    volumes:
+      - postgres_data:/home/postgres/pgdata/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-agents}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest-alpine
+    container_name: balungpisah-clickhouse
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "${CLICKHOUSE_PORT:-8123}:8123"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user=${CLICKHOUSE_USER:-default} --password=${CLICKHOUSE_PASSWORD:-clickhouse} --query='SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  tensorzero:
+    image: tensorzero/gateway:latest
+    container_name: balungpisah-tensorzero
+    volumes:
+      - ./config/tensorzero:/app/config:ro
+    command: --config-file /app/config/tensorzero.toml
+    environment:
+      TENSORZERO_CLICKHOUSE_URL: http://${CLICKHOUSE_USER:-default}:${CLICKHOUSE_PASSWORD:-clickhouse}@balungpisah-clickhouse:8123/tensorzero
+    ports:
+      - "${TENSORZERO_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--tries=1", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  tensorzero-ui:
+    image: tensorzero/ui:latest
+    container_name: balungpisah-tensorzero-ui
+    volumes:
+      - ./config/tensorzero:/app/config:ro
+    environment:
+      TENSORZERO_CLICKHOUSE_URL: http://${CLICKHOUSE_USER:-default}:${CLICKHOUSE_PASSWORD:-clickhouse}@balungpisah-clickhouse:8123/tensorzero
+      TENSORZERO_GATEWAY_URL: http://balungpisah-tensorzero:3000
+    ports:
+      - "${TENSORZERO_UI_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--tries=1", "http://localhost:4000"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      tensorzero:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  clickhouse_data:
