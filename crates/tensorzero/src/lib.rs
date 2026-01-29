@@ -34,9 +34,9 @@ pub mod response;
 pub use client::TensorZeroClient;
 pub use error::{Result, TensorZeroError};
 pub use request::{
-    InferenceInput, InferenceRequest, InferenceRequestBuilder, InputContentBlock, InputMessage,
-    JsonInferenceInput, JsonInferenceRequest, JsonInferenceRequestBuilder, MessageRole, ToolChoice,
-    ToolDefinition,
+    Credentials, InferenceInput, InferenceRequest, InferenceRequestBuilder, InputContentBlock,
+    InputMessage, JsonInferenceInput, JsonInferenceRequest, JsonInferenceRequestBuilder,
+    MessageRole, ToolChoice, ToolDefinition,
 };
 pub use response::{
     ChunkEvent, ContentBlock, ContentBlockDeltaEvent, ContentBlockStartEvent,

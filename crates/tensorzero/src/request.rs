@@ -5,18 +5,26 @@ use serde_json::Value;
 use uuid::Uuid;
 
 /// Tool choice configuration for inference requests.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
     /// Let the model decide whether to use tools.
     #[default]
     Auto,
     /// Force the model to use a specific tool.
-    Tool(String),
+    #[serde(rename = "specific")]
+    Specific { name: String },
     /// Prevent the model from using any tools.
     None,
     /// Require the model to use at least one tool.
     Required,
+}
+
+impl ToolChoice {
+    /// Create a tool choice that forces a specific tool.
+    pub fn specific(name: impl Into<String>) -> Self {
+        Self::Specific { name: name.into() }
+    }
 }
 
 /// A single message in the conversation.
@@ -63,18 +71,23 @@ impl InputMessage {
                 r#type: "tool_call".to_string(),
                 id: id.into(),
                 name: name.into(),
-                arguments: arguments.to_string(),
+                arguments,
             }],
         }
     }
 
     /// Create a new tool result message.
-    pub fn tool_result(id: impl Into<String>, result: impl Into<String>) -> Self {
+    pub fn tool_result(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        result: impl Into<String>,
+    ) -> Self {
         Self {
             role: MessageRole::User,
             content: vec![InputContentBlock::ToolResult {
                 r#type: "tool_result".to_string(),
                 id: id.into(),
+                name: name.into(),
                 result: result.into(),
             }],
         }
@@ -108,12 +121,14 @@ pub enum InputContentBlock {
         r#type: String,
         id: String,
         name: String,
-        arguments: String,
+        /// Arguments as a JSON object (can also be a string for backwards compatibility).
+        arguments: Value,
     },
     /// Tool result from execution.
     ToolResult {
         r#type: String,
         id: String,
+        name: String,
         result: String,
     },
 }
@@ -140,28 +155,64 @@ impl ToolDefinition {
     }
 }
 
+/// Credentials for dynamic API keys.
+///
+/// TensorZero supports dynamic API keys via the `credentials` field.
+/// Keys like `system_api_key` can be provided at request time.
+pub type Credentials = Value;
+
 /// Request payload for chat inference.
 #[derive(Debug, Clone, Serialize)]
 pub struct InferenceRequest {
     /// Function name configured in TensorZero.
-    pub function_name: String,
+    /// Either `function_name` or `model` must be provided.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_name: Option<String>,
+
+    /// Model name for ad-hoc inference (alternative to function_name).
+    /// When using model directly, TensorZero uses the built-in `tensorzero::default` function.
+    ///
+    /// Formats:
+    /// - `"my_model"` - references `[models.my_model]` in config
+    /// - `"openai::gpt-4o"` - calls provider API directly (shorthand)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+
     /// Optional episode ID for tracking conversations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episode_id: Option<Uuid>,
+
     /// Input messages for the conversation.
     pub input: InferenceInput,
+
     /// Whether to stream the response.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stream: bool,
+
     /// Tool choice configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+
     /// Additional tools available for this request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additional_tools: Option<Vec<ToolDefinition>>,
+
+    /// Whether to allow parallel tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+
     /// Template parameters for dynamic prompts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
+
+    /// Dynamic credentials (e.g., API keys).
+    /// Use this to pass `system_api_key` and other dynamic credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<Credentials>,
+
+    /// Tags for tracking and observability.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Value>,
 }
 
 /// Input for inference request.
@@ -178,13 +229,17 @@ pub struct InferenceInput {
 #[derive(Debug, Default)]
 pub struct InferenceRequestBuilder {
     function_name: Option<String>,
+    model_name: Option<String>,
     episode_id: Option<Uuid>,
     messages: Vec<InputMessage>,
     system: Option<String>,
     stream: bool,
     tool_choice: Option<ToolChoice>,
     additional_tools: Option<Vec<ToolDefinition>>,
+    parallel_tool_calls: Option<bool>,
     params: Option<Value>,
+    credentials: Option<Credentials>,
+    tags: Option<Value>,
 }
 
 impl InferenceRequestBuilder {
@@ -194,8 +249,23 @@ impl InferenceRequestBuilder {
     }
 
     /// Set the function name.
+    ///
+    /// Either `function_name` or `model` must be set before building.
     pub fn function_name(mut self, name: impl Into<String>) -> Self {
         self.function_name = Some(name.into());
+        self
+    }
+
+    /// Set the model name for ad-hoc inference.
+    ///
+    /// Use this as an alternative to `function_name` when you want to use
+    /// a model directly without a pre-configured function.
+    ///
+    /// Formats:
+    /// - `"my_model"` - references `[models.my_model]` in config
+    /// - `"openai::gpt-4o"` - calls provider API directly (shorthand)
+    pub fn model(mut self, name: impl Into<String>) -> Self {
+        self.model_name = Some(name.into());
         self
     }
 
@@ -241,22 +311,58 @@ impl InferenceRequestBuilder {
         self
     }
 
+    /// Set whether to allow parallel tool calls.
+    pub fn parallel_tool_calls(mut self, parallel: bool) -> Self {
+        self.parallel_tool_calls = Some(parallel);
+        self
+    }
+
     /// Set template parameters.
     pub fn params(mut self, params: Value) -> Self {
         self.params = Some(params);
         self
     }
 
+    /// Set dynamic credentials (e.g., API keys).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use balungpisah_tensorzero::InferenceRequestBuilder;
+    /// use serde_json::json;
+    ///
+    /// let request = InferenceRequestBuilder::new()
+    ///     .model("gpt-4o")
+    ///     .credentials(json!({
+    ///         "system_api_key": "sk-..."
+    ///     }))
+    ///     .build();
+    /// ```
+    pub fn credentials(mut self, credentials: Value) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
+
+    /// Set tags for tracking and observability.
+    pub fn tags(mut self, tags: Value) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
     /// Build the inference request.
+    ///
+    /// Either `function_name` or `model_name` must be set.
     pub fn build(self) -> crate::error::Result<InferenceRequest> {
-        let function_name =
-            self.function_name
-                .ok_or_else(|| crate::error::TensorZeroError::InvalidRequest {
-                    message: "function_name is required".to_string(),
-                })?;
+        // Validate that either function_name or model_name is set
+        if self.function_name.is_none() && self.model_name.is_none() {
+            return Err(crate::error::TensorZeroError::InvalidRequest {
+                message: "either function_name or model_name must be set".to_string(),
+            });
+        }
 
         Ok(InferenceRequest {
-            function_name,
+            function_name: self.function_name,
+            model_name: self.model_name,
             episode_id: self.episode_id,
             input: InferenceInput {
                 system: self.system,
@@ -265,7 +371,10 @@ impl InferenceRequestBuilder {
             stream: self.stream,
             tool_choice: self.tool_choice,
             additional_tools: self.additional_tools,
+            parallel_tool_calls: self.parallel_tool_calls,
             params: self.params,
+            credentials: self.credentials,
+            tags: self.tags,
         })
     }
 }
@@ -274,18 +383,35 @@ impl InferenceRequestBuilder {
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonInferenceRequest {
     /// Function name configured in TensorZero.
-    pub function_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function_name: Option<String>,
+
+    /// Model name for ad-hoc inference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+
     /// Optional episode ID for tracking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episode_id: Option<Uuid>,
+
     /// Input for the JSON inference.
     pub input: JsonInferenceInput,
+
     /// Whether to stream the response.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stream: bool,
+
     /// Output schema for the response.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
+
+    /// Dynamic credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<Credentials>,
+
+    /// Tags for tracking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Value>,
 }
 
 /// Input for JSON inference request.
@@ -302,11 +428,14 @@ pub struct JsonInferenceInput {
 #[derive(Debug, Default)]
 pub struct JsonInferenceRequestBuilder {
     function_name: Option<String>,
+    model_name: Option<String>,
     episode_id: Option<Uuid>,
     messages: Vec<InputMessage>,
     system: Option<String>,
     stream: bool,
     output_schema: Option<Value>,
+    credentials: Option<Credentials>,
+    tags: Option<Value>,
 }
 
 impl JsonInferenceRequestBuilder {
@@ -318,6 +447,12 @@ impl JsonInferenceRequestBuilder {
     /// Set the function name.
     pub fn function_name(mut self, name: impl Into<String>) -> Self {
         self.function_name = Some(name.into());
+        self
+    }
+
+    /// Set the model name.
+    pub fn model(mut self, name: impl Into<String>) -> Self {
+        self.model_name = Some(name.into());
         self
     }
 
@@ -357,16 +492,29 @@ impl JsonInferenceRequestBuilder {
         self
     }
 
+    /// Set dynamic credentials.
+    pub fn credentials(mut self, credentials: Value) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
+
+    /// Set tags for tracking.
+    pub fn tags(mut self, tags: Value) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
     /// Build the JSON inference request.
     pub fn build(self) -> crate::error::Result<JsonInferenceRequest> {
-        let function_name =
-            self.function_name
-                .ok_or_else(|| crate::error::TensorZeroError::InvalidRequest {
-                    message: "function_name is required".to_string(),
-                })?;
+        if self.function_name.is_none() && self.model_name.is_none() {
+            return Err(crate::error::TensorZeroError::InvalidRequest {
+                message: "either function_name or model_name must be set".to_string(),
+            });
+        }
 
         Ok(JsonInferenceRequest {
-            function_name,
+            function_name: self.function_name,
+            model_name: self.model_name,
             episode_id: self.episode_id,
             input: JsonInferenceInput {
                 system: self.system,
@@ -374,6 +522,8 @@ impl JsonInferenceRequestBuilder {
             },
             stream: self.stream,
             output_schema: self.output_schema,
+            credentials: self.credentials,
+            tags: self.tags,
         })
     }
 }
