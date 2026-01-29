@@ -57,19 +57,20 @@ pub mod tools;
 /// Prelude module for convenient imports.
 pub mod prelude {
     pub use crate::agent::{Agent, AgentBuilder, ChatRequest, ChatResponse};
+    pub use crate::context::{ContextConfig, ToolsContextConfig};
     pub use crate::error::{AgentError, Result, StorageError, ToolError};
     pub use crate::models::{ContentBlock, Message, MessageContent, Role, Thread, ThreadOptions};
     pub use crate::tools::{ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult};
 
     #[cfg(feature = "postgres")]
-    pub use crate::storage::{PostgresConfig, PostgresStorage};
+    pub use crate::storage::{PostgresConfig, PostgresStorage, Storage};
 
-    pub use balungpisah_tensorzero::TensorZeroClient;
+    pub use balungpisah_tensorzero::{TensorZeroClient, ToolChoice};
 }
 
 // Re-export main types at crate root
 pub use agent::{Agent, AgentBuilder, ChatRequest, ChatResponse, Usage};
-pub use context::ContextFilter;
+pub use context::{ContextConfig, ContextFilter, ToolsContextConfig};
 pub use error::{AgentError, Result, StorageError, ToolError};
 pub use models::{ContentBlock, Message, MessageContent, Role, Thread, ThreadOptions};
 pub use storage::{MessageStorage, Storage, ThreadStorage};
