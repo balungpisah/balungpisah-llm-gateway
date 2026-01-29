@@ -135,7 +135,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
         // Simple expression evaluation (in production, use a proper parser)
         match evaluate_simple_expression(expression) {
-            Ok(value) => ToolResult::success(&ctx.tool_call_id, &ctx.tool_name, format!("{}", value)),
+            Ok(value) => {
+                ToolResult::success(&ctx.tool_call_id, &ctx.tool_name, format!("{}", value))
+            }
             Err(e) => ToolResult::error(&ctx.tool_call_id, &ctx.tool_name, e),
         }
     });
@@ -145,11 +147,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create context configuration for conversation management
     let context_config = ContextConfig::new()
         .max_messages(20)
-        .tools(
-            ToolsConfig::new()
-                .retain_last(5)
-                .limit_per_message(3),
-        )
+        .tools(ToolsConfig::new().retain_last(5).limit_per_message(3))
         .loop_override(
             // Use more aggressive context limits during tool loops
             ContextConfig::new()

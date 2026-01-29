@@ -40,25 +40,26 @@ pub struct Message {
     pub role: Role,
     /// Message content.
     pub content: MessageContent,
-    /// When the message was created.
-    pub created_at: DateTime<Utc>,
-    /// TensorZero inference ID (if from assistant).
-    pub inference_id: Option<Uuid>,
     /// TensorZero episode ID.
     pub episode_id: Option<Uuid>,
+    /// When the message was created.
+    pub created_at: DateTime<Utc>,
+    /// When the message was last updated.
+    pub updated_at: DateTime<Utc>,
 }
 
 impl Message {
     /// Create a new message.
     pub fn new(thread_id: Uuid, role: Role, content: impl Into<MessageContent>) -> Self {
+        let now = Utc::now();
         Self {
             id: Uuid::now_v7(),
             thread_id,
             role,
             content: content.into(),
-            created_at: Utc::now(),
-            inference_id: None,
             episode_id: None,
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -72,16 +73,15 @@ impl Message {
         Self::new(thread_id, Role::Assistant, content)
     }
 
-    /// Set the inference ID.
-    pub fn with_inference_id(mut self, inference_id: Uuid) -> Self {
-        self.inference_id = Some(inference_id);
-        self
-    }
-
     /// Set the episode ID.
     pub fn with_episode_id(mut self, episode_id: Uuid) -> Self {
         self.episode_id = Some(episode_id);
         self
+    }
+
+    /// Update the `updated_at` timestamp.
+    pub fn touch(&mut self) {
+        self.updated_at = Utc::now();
     }
 
     /// Get the text content of this message.
@@ -150,14 +150,15 @@ impl ToolResultMessageBuilder {
             return None;
         }
 
+        let now = Utc::now();
         Some(Message {
             id: Uuid::now_v7(),
             thread_id,
             role: Role::User,
             content: MessageContent::Blocks(self.results),
-            created_at: Utc::now(),
-            inference_id: None,
             episode_id: None,
+            created_at: now,
+            updated_at: now,
         })
     }
 }

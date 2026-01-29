@@ -106,6 +106,13 @@ where
         Ok(self.storage.delete_message(message_id).await?)
     }
 
+    /// Delete all messages in a thread after a specific message.
+    /// This is used for the "edit and resubmit" workflow.
+    /// Returns the number of messages deleted.
+    pub async fn delete_messages_after(&self, thread_id: Uuid, after_id: Uuid) -> Result<u64> {
+        Ok(self.storage.delete_messages_after(thread_id, after_id).await?)
+    }
+
     /// Chat with the agent (non-streaming).
     ///
     /// This method sends a message and waits for the complete response,
@@ -196,16 +203,8 @@ where
                 // Save assistant message
                 let content = convert_response_to_message_content(&response.content);
                 let assistant_msg = Message::assistant(thread.id, content)
-                    .with_inference_id(response.inference_id)
                     .with_episode_id(response.episode_id);
                 self.storage.create_message(&assistant_msg).await?;
-
-                // Update thread episode ID if needed
-                if thread.episode_id.is_none() {
-                    let mut updated_thread = (*thread).clone();
-                    updated_thread.episode_id = Some(response.episode_id);
-                    self.storage.update_thread(&updated_thread).await?;
-                }
 
                 return Ok(ChatResponse {
                     text,
@@ -219,7 +218,6 @@ where
             // Save assistant message with tool calls
             let content = convert_response_to_message_content(&response.content);
             let assistant_msg = Message::assistant(thread.id, content)
-                .with_inference_id(response.inference_id)
                 .with_episode_id(response.episode_id);
             self.storage.create_message(&assistant_msg).await?;
 
@@ -247,7 +245,7 @@ where
     /// Build an inference request with all configured options.
     fn build_inference_request(
         &self,
-        thread: &Thread,
+        _thread: &Thread,
         messages: &[balungpisah_tensorzero::InputMessage],
     ) -> Result<balungpisah_tensorzero::InferenceRequest> {
         let mut builder = InferenceRequestBuilder::new().messages(messages.iter().cloned());
@@ -262,10 +260,7 @@ where
             }
         }
 
-        // Set episode ID
-        if let Some(episode_id) = thread.episode_id {
-            builder = builder.episode_id(episode_id);
-        }
+        // Note: episode_id is now tracked per-message, TensorZero generates a new one per inference
 
         // Set system prompt
         if let Some(ref prompt) = self.system_prompt {
@@ -536,13 +531,14 @@ fn tool_results_to_message(thread_id: Uuid, results: &[ToolResult]) -> Message {
         })
         .collect();
 
+    let now = chrono::Utc::now();
     Message {
         id: Uuid::now_v7(),
         thread_id,
         role: Role::User,
         content: MessageContent::Blocks(blocks),
-        created_at: chrono::Utc::now(),
-        inference_id: None,
         episode_id: None,
+        created_at: now,
+        updated_at: now,
     }
 }

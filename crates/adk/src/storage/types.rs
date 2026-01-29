@@ -62,6 +62,11 @@ pub trait MessageStorage: Send + Sync {
 
     /// Count messages in a thread.
     async fn count_thread_messages(&self, thread_id: Uuid) -> StorageResult<usize>;
+
+    /// Delete all messages in a thread created after the specified message.
+    /// This is used for the "edit and resubmit" workflow.
+    /// Returns the number of messages deleted.
+    async fn delete_messages_after(&self, thread_id: Uuid, after_id: Uuid) -> StorageResult<u64>;
 }
 
 /// Combined storage interface for convenience.

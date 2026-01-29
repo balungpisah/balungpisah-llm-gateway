@@ -154,9 +154,7 @@ where
                 .messages(messages.clone())
                 .stream();
 
-            if let Some(episode_id) = thread.episode_id {
-                request_builder = request_builder.episode_id(episode_id);
-            }
+            // Note: episode_id is now tracked per-message, TensorZero generates a new one per inference
 
             if let Some(tools) = additional_tools {
                 request_builder = request_builder
@@ -167,7 +165,7 @@ where
             let request = request_builder.build()?;
 
             // Stream the response
-            let (response_content, inference_id, episode_id) =
+            let (response_content, _inference_id, episode_id) =
                 self.stream_response(request, &sender).await?;
 
             // Send iteration complete
@@ -185,16 +183,8 @@ where
                     thread.id,
                     response_content_to_message_content(&response_content),
                 )
-                .with_inference_id(inference_id)
                 .with_episode_id(episode_id);
                 self.storage.create_message(&assistant_msg).await?;
-
-                // Update thread episode ID if needed
-                if thread.episode_id.is_none() {
-                    let mut updated_thread = (*thread).clone();
-                    updated_thread.episode_id = Some(episode_id);
-                    self.storage.update_thread(&updated_thread).await?;
-                }
 
                 let _ = sender.send(SseEvent::done(final_text, iteration)).await;
                 return Ok(());
@@ -205,7 +195,6 @@ where
                 thread.id,
                 response_content_to_message_content(&response_content),
             )
-            .with_inference_id(inference_id)
             .with_episode_id(episode_id);
             self.storage.create_message(&assistant_msg).await?;
 
@@ -574,13 +563,14 @@ fn tool_results_to_message(thread_id: Uuid, results: &[ToolResult]) -> Message {
         })
         .collect();
 
+    let now = chrono::Utc::now();
     Message {
         id: Uuid::now_v7(),
         thread_id,
         role: Role::User,
         content: MessageContent::Blocks(blocks),
-        created_at: chrono::Utc::now(),
-        inference_id: None,
         episode_id: None,
+        created_at: now,
+        updated_at: now,
     }
 }

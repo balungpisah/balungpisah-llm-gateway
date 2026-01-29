@@ -107,13 +107,14 @@ impl ThreadStorage for PostgresStorage {
 
         sqlx::query(
             r#"
-            INSERT INTO threads (id, external_id, episode_id, metadata, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO threads (id, external_id, agent_slug, title, metadata, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
         .bind(thread.id)
         .bind(&thread.external_id)
-        .bind(thread.episode_id)
+        .bind(&thread.agent_slug)
+        .bind(&thread.title)
         .bind(&thread.metadata)
         .bind(thread.created_at)
         .bind(thread.updated_at)
@@ -129,7 +130,7 @@ impl ThreadStorage for PostgresStorage {
 
         let row = sqlx::query(
             r#"
-            SELECT id, external_id, episode_id, metadata, created_at, updated_at
+            SELECT id, external_id, agent_slug, title, metadata, created_at, updated_at
             FROM threads
             WHERE id = $1
             "#,
@@ -141,7 +142,8 @@ impl ThreadStorage for PostgresStorage {
         Ok(row.map(|r| Thread {
             id: r.get("id"),
             external_id: r.get("external_id"),
-            episode_id: r.get("episode_id"),
+            agent_slug: r.get("agent_slug"),
+            title: r.get("title"),
             metadata: r.get("metadata"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -154,7 +156,7 @@ impl ThreadStorage for PostgresStorage {
 
         let row = sqlx::query(
             r#"
-            SELECT id, external_id, episode_id, metadata, created_at, updated_at
+            SELECT id, external_id, agent_slug, title, metadata, created_at, updated_at
             FROM threads
             WHERE external_id = $1
             ORDER BY created_at DESC
@@ -168,7 +170,8 @@ impl ThreadStorage for PostgresStorage {
         Ok(row.map(|r| Thread {
             id: r.get("id"),
             external_id: r.get("external_id"),
-            episode_id: r.get("episode_id"),
+            agent_slug: r.get("agent_slug"),
+            title: r.get("title"),
             metadata: r.get("metadata"),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -182,13 +185,14 @@ impl ThreadStorage for PostgresStorage {
         sqlx::query(
             r#"
             UPDATE threads
-            SET external_id = $2, episode_id = $3, metadata = $4, updated_at = $5
+            SET external_id = $2, agent_slug = $3, title = $4, metadata = $5, updated_at = $6
             WHERE id = $1
             "#,
         )
         .bind(thread.id)
         .bind(&thread.external_id)
-        .bind(thread.episode_id)
+        .bind(&thread.agent_slug)
+        .bind(&thread.title)
         .bind(&thread.metadata)
         .bind(thread.updated_at)
         .execute(&self.pool)
@@ -224,7 +228,7 @@ impl ThreadStorage for PostgresStorage {
                 let pattern = format!("{}%", prefix);
                 sqlx::query(
                     r#"
-                    SELECT id, external_id, episode_id, metadata, created_at, updated_at
+                    SELECT id, external_id, agent_slug, title, metadata, created_at, updated_at
                     FROM threads
                     WHERE external_id LIKE $1
                     ORDER BY created_at DESC
@@ -240,7 +244,7 @@ impl ThreadStorage for PostgresStorage {
             None => {
                 sqlx::query(
                     r#"
-                    SELECT id, external_id, episode_id, metadata, created_at, updated_at
+                    SELECT id, external_id, agent_slug, title, metadata, created_at, updated_at
                     FROM threads
                     ORDER BY created_at DESC
                     LIMIT $1 OFFSET $2
@@ -258,7 +262,8 @@ impl ThreadStorage for PostgresStorage {
             .map(|r| Thread {
                 id: r.get("id"),
                 external_id: r.get("external_id"),
-                episode_id: r.get("episode_id"),
+                agent_slug: r.get("agent_slug"),
+                title: r.get("title"),
                 metadata: r.get("metadata"),
                 created_at: r.get("created_at"),
                 updated_at: r.get("updated_at"),
@@ -280,7 +285,7 @@ impl MessageStorage for PostgresStorage {
 
         sqlx::query(
             r#"
-            INSERT INTO messages (id, thread_id, role, content, created_at, inference_id, episode_id)
+            INSERT INTO messages (id, thread_id, role, content, episode_id, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             "#,
         )
@@ -288,9 +293,9 @@ impl MessageStorage for PostgresStorage {
         .bind(message.thread_id)
         .bind(message.role.to_string())
         .bind(content_json)
-        .bind(message.created_at)
-        .bind(message.inference_id)
         .bind(message.episode_id)
+        .bind(message.created_at)
+        .bind(message.updated_at)
         .execute(&self.pool)
         .await?;
 
@@ -303,7 +308,7 @@ impl MessageStorage for PostgresStorage {
 
         let row = sqlx::query(
             r#"
-            SELECT id, thread_id, role, content, created_at, inference_id, episode_id
+            SELECT id, thread_id, role, content, episode_id, created_at, updated_at
             FROM messages
             WHERE id = $1
             "#,
@@ -325,9 +330,9 @@ impl MessageStorage for PostgresStorage {
                         message: e.to_string(),
                     }
                 })?,
-                created_at: r.get("created_at"),
-                inference_id: r.get("inference_id"),
                 episode_id: r.get("episode_id"),
+                created_at: r.get("created_at"),
+                updated_at: r.get("updated_at"),
             })
         })
         .transpose()
@@ -339,7 +344,7 @@ impl MessageStorage for PostgresStorage {
 
         let rows = sqlx::query(
             r#"
-            SELECT id, thread_id, role, content, created_at, inference_id, episode_id
+            SELECT id, thread_id, role, content, episode_id, created_at, updated_at
             FROM messages
             WHERE thread_id = $1
             ORDER BY created_at ASC
@@ -363,9 +368,9 @@ impl MessageStorage for PostgresStorage {
                             message: e.to_string(),
                         }
                     })?,
-                    created_at: r.get("created_at"),
-                    inference_id: r.get("inference_id"),
                     episode_id: r.get("episode_id"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
                 })
             })
             .collect()
@@ -381,7 +386,7 @@ impl MessageStorage for PostgresStorage {
 
         let rows = sqlx::query(
             r#"
-            SELECT id, thread_id, role, content, created_at, inference_id, episode_id
+            SELECT id, thread_id, role, content, episode_id, created_at, updated_at
             FROM messages
             WHERE thread_id = $1
             ORDER BY created_at DESC
@@ -409,9 +414,9 @@ impl MessageStorage for PostgresStorage {
                             message: e.to_string(),
                         }
                     })?,
-                    created_at: r.get("created_at"),
-                    inference_id: r.get("inference_id"),
                     episode_id: r.get("episode_id"),
+                    created_at: r.get("created_at"),
+                    updated_at: r.get("updated_at"),
                 })
             })
             .collect::<StorageResult<Vec<_>>>()?;
@@ -432,15 +437,15 @@ impl MessageStorage for PostgresStorage {
         sqlx::query(
             r#"
             UPDATE messages
-            SET role = $2, content = $3, inference_id = $4, episode_id = $5
+            SET role = $2, content = $3, episode_id = $4, updated_at = $5
             WHERE id = $1
             "#,
         )
         .bind(message.id)
         .bind(message.role.to_string())
         .bind(content_json)
-        .bind(message.inference_id)
         .bind(message.episode_id)
+        .bind(message.updated_at)
         .execute(&self.pool)
         .await?;
 
@@ -483,19 +488,43 @@ impl MessageStorage for PostgresStorage {
         let count: i64 = row.get("count");
         Ok(count as usize)
     }
+
+    #[instrument(skip(self))]
+    async fn delete_messages_after(&self, thread_id: Uuid, after_id: Uuid) -> StorageResult<u64> {
+        debug!("Deleting messages after message");
+
+        let result = sqlx::query(
+            r#"
+            DELETE FROM messages
+            WHERE thread_id = $1
+              AND created_at > (SELECT created_at FROM messages WHERE id = $2)
+            "#,
+        )
+        .bind(thread_id)
+        .bind(after_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
 }
 
 #[async_trait]
 impl Storage for PostgresStorage {
     async fn migrate(&self) -> StorageResult<()> {
-        // Run embedded migrations using raw_sql to support multiple statements
-        sqlx::raw_sql(include_str!("../../migrations/001_initial.sql"))
-            .execute(&self.pool)
+        // Run migrations using sqlx's built-in migration system
+        // This will:
+        // - Create _sqlx_migrations table if it doesn't exist
+        // - Track which migrations have been applied
+        // - Only run new migrations
+        sqlx::migrate!("./migrations")
+            .run(&self.pool)
             .await
             .map_err(|e| StorageError::Migration {
                 message: e.to_string(),
             })?;
 
+        debug!("Database migrations completed successfully");
         Ok(())
     }
 

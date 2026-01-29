@@ -12,8 +12,10 @@ pub struct Thread {
     pub id: Uuid,
     /// External identifier (e.g., user ID, session ID).
     pub external_id: String,
-    /// TensorZero episode ID for this thread.
-    pub episode_id: Option<Uuid>,
+    /// Agent slug identifying the agent type.
+    pub agent_slug: Option<String>,
+    /// Conversation title.
+    pub title: Option<String>,
     /// Optional metadata for the thread.
     pub metadata: Option<Value>,
     /// When the thread was created.
@@ -29,7 +31,8 @@ impl Thread {
         Self {
             id: Uuid::now_v7(),
             external_id: external_id.into(),
-            episode_id: None,
+            agent_slug: None,
+            title: None,
             metadata: None,
             created_at: now,
             updated_at: now,
@@ -42,16 +45,23 @@ impl Thread {
         Self {
             id,
             external_id: external_id.into(),
-            episode_id: None,
+            agent_slug: None,
+            title: None,
             metadata: None,
             created_at: now,
             updated_at: now,
         }
     }
 
-    /// Set the episode ID.
-    pub fn with_episode_id(mut self, episode_id: Uuid) -> Self {
-        self.episode_id = Some(episode_id);
+    /// Set the agent slug.
+    pub fn with_agent_slug(mut self, agent_slug: impl Into<String>) -> Self {
+        self.agent_slug = Some(agent_slug.into());
+        self
+    }
+
+    /// Set the title.
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
         self
     }
 
