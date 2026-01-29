@@ -71,29 +71,60 @@ pub enum ContentBlock {
 pub struct ToolCallBlock {
     /// Unique ID for this tool call.
     pub id: String,
-    /// Name of the tool to call.
-    pub name: String,
-    /// Arguments as a JSON string.
-    pub arguments: String,
+    /// Validated name of the tool (null if invalid).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Validated arguments as parsed JSON (null if invalid).
+    #[serde(default)]
+    pub arguments: Option<Value>,
     /// Raw name from the model (before normalization).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_name: Option<String>,
-    /// Raw arguments from the model.
+    /// Raw arguments from the model as a string.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_arguments: Option<String>,
 }
 
 impl ToolCallBlock {
-    /// Parse the arguments as JSON.
+    /// Get the tool name, preferring validated name over raw_name.
+    pub fn tool_name(&self) -> Option<&str> {
+        self.name
+            .as_deref()
+            .or(self.raw_name.as_deref())
+    }
+
+    /// Get the arguments as a Value.
+    ///
+    /// Returns the validated arguments if available, otherwise tries to parse raw_arguments.
     pub fn parse_arguments(&self) -> Result<Value, serde_json::Error> {
-        serde_json::from_str(&self.arguments)
+        if let Some(ref args) = self.arguments {
+            Ok(args.clone())
+        } else if let Some(ref raw) = self.raw_arguments {
+            serde_json::from_str(raw)
+        } else {
+            Ok(Value::Null)
+        }
+    }
+
+    /// Get the arguments string (for use in input messages).
+    ///
+    /// Returns raw_arguments if available, otherwise serializes the validated arguments.
+    pub fn arguments_string(&self) -> String {
+        if let Some(ref raw) = self.raw_arguments {
+            raw.clone()
+        } else if let Some(ref args) = self.arguments {
+            serde_json::to_string(args).unwrap_or_default()
+        } else {
+            "{}".to_string()
+        }
     }
 
     /// Parse the arguments into a specific type.
     pub fn parse_arguments_as<T: serde::de::DeserializeOwned>(
         &self,
     ) -> Result<T, serde_json::Error> {
-        serde_json::from_str(&self.arguments)
+        let args = self.parse_arguments()?;
+        serde_json::from_value(args)
     }
 }
 
@@ -194,11 +225,26 @@ pub enum ContentBlockType {
     /// Text content block.
     Text { text: String },
     /// Tool call content block.
-    ToolCall {
-        id: String,
-        name: String,
-        arguments: String,
-    },
+    ToolCall(StreamToolCall),
+}
+
+/// Tool call in streaming response content block start.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamToolCall {
+    /// Unique ID for this tool call.
+    pub id: String,
+    /// Raw name of the tool (may be partial in streaming).
+    #[serde(default)]
+    pub raw_name: Option<String>,
+    /// Raw arguments as a string (may be partial in streaming).
+    #[serde(default)]
+    pub raw_arguments: Option<String>,
+    /// Name of the tool (for compatibility).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Arguments (for compatibility).
+    #[serde(default)]
+    pub arguments: Option<String>,
 }
 
 /// Delta update for a content block.

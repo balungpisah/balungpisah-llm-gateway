@@ -97,7 +97,7 @@ impl TensorZeroClient {
     /// # Ok(())
     /// # }
     /// ```
-    #[instrument(skip(self, request), fields(function = %request.function_name))]
+    #[instrument(skip(self, request), fields(function = ?request.function_name, model_name = ?request.model_name))]
     pub async fn inference(&self, request: InferenceRequest) -> Result<InferenceResponse> {
         let url = format!("{}/inference", self.base_url);
 
@@ -162,7 +162,7 @@ impl TensorZeroClient {
     /// # Ok(())
     /// # }
     /// ```
-    #[instrument(skip(self, request), fields(function = %request.function_name))]
+    #[instrument(skip(self, request), fields(function = ?request.function_name, model_name = ?request.model_name))]
     pub async fn inference_stream(
         &self,
         request: InferenceRequest,
@@ -255,7 +255,7 @@ impl TensorZeroClient {
     /// # Ok(())
     /// # }
     /// ```
-    #[instrument(skip(self, request), fields(function = %request.function_name))]
+    #[instrument(skip(self, request), fields(function = ?request.function_name, model_name = ?request.model_name))]
     pub async fn json_inference(
         &self,
         request: JsonInferenceRequest,
