@@ -73,6 +73,24 @@ impl Message {
         Self::new(thread_id, Role::User, normalized_content)
     }
 
+    /// Create a new user message with a specific ID (for optimistic UI support).
+    ///
+    /// This allows the frontend to provide a pre-generated UUID so the message
+    /// ID is known before the server response.
+    pub fn user_with_id(id: Uuid, thread_id: Uuid, content: impl Into<MessageContent>) -> Self {
+        let normalized_content = content.into().into_blocks();
+        let now = Utc::now();
+        Self {
+            id,
+            thread_id,
+            role: Role::User,
+            content: normalized_content,
+            episode_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// Create a new assistant message.
     ///
     /// Assistant messages are always stored in blocks format for consistency.
