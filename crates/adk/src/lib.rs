@@ -45,6 +45,7 @@
 //! # Crate Features
 //!
 //! - `postgres` (default): Enable PostgreSQL storage support
+//! - `minio`: Enable MinIO/S3 object storage support for multimodal content
 
 pub mod agent;
 pub mod context;
@@ -54,16 +55,25 @@ pub mod storage;
 pub mod stream;
 pub mod tools;
 
+#[cfg(feature = "minio")]
+pub mod minio;
+
 /// Prelude module for convenient imports.
 pub mod prelude {
     pub use crate::agent::{Agent, AgentBuilder, ChatRequest, ChatResponse};
     pub use crate::context::{ContextConfig, ToolsConfig};
     pub use crate::error::{AgentError, Result, StorageError, ToolError};
-    pub use crate::models::{ContentBlock, Message, MessageContent, Role, Thread, ThreadOptions};
+    pub use crate::models::{
+        ContentBlock, FileMetadata, Message, MessageContent, Role, Thread, ThreadOptions,
+    };
+    pub use crate::storage::FileMetadataStorage;
     pub use crate::tools::{ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolResult};
 
     #[cfg(feature = "postgres")]
     pub use crate::storage::{PostgresConfig, PostgresStorage, Storage};
+
+    #[cfg(feature = "minio")]
+    pub use crate::minio::{MinioClient, MinioConfig, MinioError, MinioResult};
 
     pub use balungpisah_tensorzero::{TensorZeroClient, ToolChoice};
 }
@@ -72,8 +82,10 @@ pub mod prelude {
 pub use agent::{Agent, AgentBuilder, ChatRequest, ChatResponse, Usage};
 pub use context::{ContextConfig, ToolsConfig};
 pub use error::{AgentError, Result, StorageError, ToolError};
-pub use models::{ContentBlock, Message, MessageContent, Role, Thread, ThreadOptions};
-pub use storage::{MessageStorage, Storage, ThreadStorage};
+pub use models::{
+    ContentBlock, FileMetadata, Message, MessageContent, Role, Thread, ThreadOptions,
+};
+pub use storage::{FileMetadataStorage, MessageStorage, Storage, ThreadStorage};
 pub use stream::{SseEvent, StreamConfig, StreamExecutor};
 pub use tools::{
     FnToolExecutor, ToolContext, ToolDefinition, ToolDefinitionBuilder, ToolExecutor, ToolRegistry,
