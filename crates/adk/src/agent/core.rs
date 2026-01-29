@@ -1,7 +1,7 @@
 //! Core Agent implementation.
 
 use crate::context::{
-    convert_messages_to_input, convert_response_to_message_content, ContextFilter,
+    convert_messages_to_input, convert_response_to_message_content, ContextConfig,
 };
 use crate::error::{AgentError, Result};
 use crate::models::{Message, MessageContent, Role, Thread, ThreadOptions};
@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
+use super::builder::ModelSpec;
+
 /// An AI agent that can have conversations and use tools.
 pub struct Agent<S>
 where
@@ -24,11 +26,16 @@ where
 {
     pub(crate) client: TensorZeroClient,
     pub(crate) storage: Arc<S>,
-    pub(crate) function_name: String,
+    pub(crate) model_spec: ModelSpec,
     pub(crate) tools: ToolRegistry,
     pub(crate) max_iterations: usize,
     pub(crate) stream_config: StreamConfig,
-    pub(crate) context_filter: Option<ContextFilter>,
+    pub(crate) context_config: Option<ContextConfig>,
+    pub(crate) system_prompt: Option<String>,
+    pub(crate) credentials: Option<Value>,
+    pub(crate) tags: Option<Value>,
+    pub(crate) tool_choice: Option<ToolChoice>,
+    pub(crate) parallel_tool_calls: Option<bool>,
 }
 
 impl<S> std::fmt::Debug for Agent<S>
@@ -37,7 +44,7 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Agent")
-            .field("function_name", &self.function_name)
+            .field("model_spec", &self.model_spec)
             .field("max_iterations", &self.max_iterations)
             .field("tools", &self.tools.names())
             .finish()
@@ -84,6 +91,21 @@ where
         Ok(self.storage.get_thread_messages(thread_id).await?)
     }
 
+    /// Get a message by ID.
+    pub async fn get_message(&self, message_id: Uuid) -> Result<Option<Message>> {
+        Ok(self.storage.get_message(message_id).await?)
+    }
+
+    /// Update a message.
+    pub async fn update_message(&self, message: &Message) -> Result<()> {
+        Ok(self.storage.update_message(message).await?)
+    }
+
+    /// Delete a message.
+    pub async fn delete_message(&self, message_id: Uuid) -> Result<()> {
+        Ok(self.storage.delete_message(message_id).await?)
+    }
+
     /// Chat with the agent (non-streaming).
     ///
     /// This method sends a message and waits for the complete response,
@@ -104,15 +126,41 @@ where
 
         // Get context messages
         let stored_messages = self.storage.get_thread_messages(thread_id).await?;
-        let messages = if let Some(ref filter) = self.context_filter {
-            filter.filter_messages(stored_messages)
-        } else {
-            stored_messages
-        };
+        let messages = self.filter_context_messages(stored_messages, false);
         let input_messages = convert_messages_to_input(&messages);
 
         // Run the chat loop
         self.chat_loop(Arc::new(thread), input_messages).await
+    }
+
+    /// Filter messages based on context configuration.
+    fn filter_context_messages(&self, messages: Vec<Message>, is_loop: bool) -> Vec<Message> {
+        let config = match &self.context_config {
+            Some(cfg) => {
+                if is_loop {
+                    cfg.for_loop()
+                } else {
+                    cfg
+                }
+            }
+            None => return messages,
+        };
+
+        // Apply max_messages limit
+        if messages.len() <= config.max_messages {
+            return messages;
+        }
+
+        // Keep the most recent messages
+        let start_idx = messages.len().saturating_sub(config.max_messages);
+        let mut filtered: Vec<_> = messages.into_iter().skip(start_idx).collect();
+
+        // Ensure we start with a user message
+        while !filtered.is_empty() && filtered[0].role == Role::Assistant {
+            filtered.remove(0);
+        }
+
+        filtered
     }
 
     /// Internal chat loop that handles tool execution.
@@ -126,6 +174,7 @@ where
 
         loop {
             iteration += 1;
+            let is_loop = iteration > 1;
 
             if iteration > self.max_iterations {
                 return Err(AgentError::MaxIterationsExceeded {
@@ -133,28 +182,14 @@ where
                 });
             }
 
+            // Re-filter messages for loop iterations if needed
+            if is_loop {
+                // For now, we keep the messages as-is in the loop
+                // The context_config.for_loop() can be used for more aggressive filtering
+            }
+
             // Build request
-            let additional_tools = if !self.tools.is_empty() {
-                Some(self.tools.tensorzero_definitions())
-            } else {
-                None
-            };
-
-            let mut request_builder = InferenceRequestBuilder::new()
-                .function_name(&self.function_name)
-                .messages(messages.clone());
-
-            if let Some(episode_id) = thread.episode_id {
-                request_builder = request_builder.episode_id(episode_id);
-            }
-
-            if let Some(tools) = additional_tools {
-                request_builder = request_builder
-                    .additional_tools(tools)
-                    .tool_choice(ToolChoice::Auto);
-            }
-
-            let request = request_builder.build()?;
+            let request = self.build_inference_request(&thread, &messages)?;
 
             // Send request
             let response = self.client.inference(request).await?;
@@ -216,10 +251,69 @@ where
             for result in &tool_results {
                 messages.push(balungpisah_tensorzero::InputMessage::tool_result(
                     &result.tool_call_id,
+                    &result.tool_name,
                     &result.content,
                 ));
             }
         }
+    }
+
+    /// Build an inference request with all configured options.
+    fn build_inference_request(
+        &self,
+        thread: &Thread,
+        messages: &[balungpisah_tensorzero::InputMessage],
+    ) -> Result<balungpisah_tensorzero::InferenceRequest> {
+        let mut builder = InferenceRequestBuilder::new().messages(messages.iter().cloned());
+
+        // Set model or function
+        match &self.model_spec {
+            ModelSpec::Function(name) => {
+                builder = builder.function_name(name);
+            }
+            ModelSpec::Model(name) => {
+                builder = builder.model(name);
+            }
+        }
+
+        // Set episode ID
+        if let Some(episode_id) = thread.episode_id {
+            builder = builder.episode_id(episode_id);
+        }
+
+        // Set system prompt
+        if let Some(ref prompt) = self.system_prompt {
+            builder = builder.system(prompt);
+        }
+
+        // Set credentials
+        if let Some(ref creds) = self.credentials {
+            builder = builder.credentials(creds.clone());
+        }
+
+        // Set tags
+        if let Some(ref tags) = self.tags {
+            builder = builder.tags(tags.clone());
+        }
+
+        // Set tools
+        if !self.tools.is_empty() {
+            builder = builder.additional_tools(self.tools.tensorzero_definitions());
+
+            // Set tool choice (default to Auto if tools are present)
+            let choice = self.tool_choice.clone().unwrap_or(ToolChoice::Auto);
+            builder = builder.tool_choice(choice);
+        }
+
+        // Set parallel tool calls
+        if let Some(parallel) = self.parallel_tool_calls {
+            builder = builder.parallel_tool_calls(parallel);
+        }
+
+        builder.build().map_err(|e| AgentError::Inference {
+            message: e.to_string(),
+            status_code: None,
+        })
     }
 
     /// Execute tool calls.
@@ -231,14 +325,15 @@ where
         let mut results = Vec::new();
 
         for tc in tool_calls {
-            let result = if let Some(executor) = self.tools.get(&tc.name) {
+            let tool_name = tc.tool_name().unwrap_or("unknown");
+            let result = if let Some(executor) = self.tools.get(tool_name) {
                 let args: Value = tc.parse_arguments().unwrap_or(Value::Null);
-                let context = ToolContext::new(&tc.id, &tc.name, thread.clone());
+                let context = ToolContext::new(&tc.id, tool_name, thread.clone());
 
-                debug!("Executing tool '{}' with args: {}", tc.name, args);
+                debug!("Executing tool '{}' with args: {}", tool_name, args);
                 executor.execute(args, context).await
             } else {
-                ToolResult::error(&tc.id, format!("Tool '{}' not found", tc.name))
+                ToolResult::error(&tc.id, tool_name, format!("Tool '{}' not found", tool_name))
             };
 
             results.push(result);
@@ -267,21 +362,28 @@ where
 
         let (tx, rx) = mpsc::channel(self.stream_config.buffer_size);
 
+        // Get model/function name for the executor
+        let model_or_function = match &self.model_spec {
+            ModelSpec::Function(name) => name.clone(),
+            ModelSpec::Model(name) => name.clone(),
+        };
+
         // Create stream executor
-        let executor = StreamExecutor::new(
+        let mut executor = StreamExecutor::new(
             self.client.clone(),
             self.storage.clone(),
             self.tools.clone(),
-            &self.function_name,
+            &model_or_function,
         )
         .max_iterations(self.max_iterations)
         .config(self.stream_config.clone());
 
-        let executor = if let Some(ref filter) = self.context_filter {
-            executor.context_filter(filter.clone())
-        } else {
-            executor
-        };
+        if let Some(ref config) = self.context_config {
+            // Convert ContextConfig to ContextFilter for backward compatibility
+            // TODO: Update StreamExecutor to use ContextConfig directly
+            let filter = crate::context::ContextFilter::new().max_messages(config.max_messages);
+            executor = executor.context_filter(filter);
+        }
 
         // Spawn execution task
         tokio::spawn(async move {
@@ -303,14 +405,29 @@ where
         &mut self.tools
     }
 
-    /// Get the function name.
-    pub fn function_name(&self) -> &str {
-        &self.function_name
+    /// Get the model specification.
+    pub fn model_spec(&self) -> &ModelSpec {
+        &self.model_spec
+    }
+
+    /// Get the function name (if using a function).
+    pub fn function_name(&self) -> Option<&str> {
+        self.model_spec.as_function()
+    }
+
+    /// Get the model name (if using a model directly).
+    pub fn model_name(&self) -> Option<&str> {
+        self.model_spec.as_model()
     }
 
     /// Get the max iterations setting.
     pub fn max_iterations(&self) -> usize {
         self.max_iterations
+    }
+
+    /// Get the system prompt.
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
     }
 }
 
@@ -402,12 +519,17 @@ fn response_to_input_message(response: &InferenceResponse) -> balungpisah_tensor
                 r#type: "text".to_string(),
                 text: text.clone(),
             },
-            ContentBlock::ToolCall(tc) => InputContentBlock::ToolCall {
-                r#type: "tool_call".to_string(),
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-            },
+            ContentBlock::ToolCall(tc) => {
+                // Get the arguments as a Value for input
+                let args = tc.parse_arguments().unwrap_or(Value::Null);
+                let name = tc.tool_name().unwrap_or("unknown").to_string();
+                InputContentBlock::ToolCall {
+                    r#type: "tool_call".to_string(),
+                    id: tc.id.clone(),
+                    name,
+                    arguments: args,
+                }
+            }
         })
         .collect();
 
@@ -424,9 +546,9 @@ fn tool_results_to_message(thread_id: Uuid, results: &[ToolResult]) -> Message {
         .iter()
         .map(|r| {
             if r.is_error {
-                ContentBlock::tool_error(&r.tool_call_id, &r.content)
+                ContentBlock::tool_error(&r.tool_call_id, &r.tool_name, &r.content)
             } else {
-                ContentBlock::tool_result(&r.tool_call_id, &r.content)
+                ContentBlock::tool_result(&r.tool_call_id, &r.tool_name, &r.content)
             }
         })
         .collect();

@@ -223,6 +223,7 @@ where
             for result in &tool_results {
                 messages.push(InputMessage::tool_result(
                     &result.tool_call_id,
+                    &result.tool_name,
                     &result.content,
                 ));
             }
@@ -296,16 +297,20 @@ where
                     let _ = sender.send(SseEvent::text_delta(text)).await;
                 }
             }
-            ContentBlockType::ToolCall {
-                id,
-                name,
-                arguments,
-            } => {
+            ContentBlockType::ToolCall(tc) => {
+                // Get name from raw_name or name field
+                let name = tc.raw_name.clone()
+                    .or_else(|| tc.name.clone())
+                    .unwrap_or_default();
+                // Get arguments from raw_arguments or arguments field
+                let args = tc.raw_arguments.clone()
+                    .or_else(|| tc.arguments.clone())
+                    .unwrap_or_default();
                 blocks.insert(
                     event.index,
-                    ContentBlockBuilder::tool_call(id.clone(), name.clone(), arguments.clone()),
+                    ContentBlockBuilder::tool_call(tc.id.clone(), name.clone(), args),
                 );
-                let _ = sender.send(SseEvent::tool_use_start(id, name)).await;
+                let _ = sender.send(SseEvent::tool_use_start(&tc.id, &name)).await;
             }
         }
     }
@@ -359,7 +364,7 @@ where
                 debug!("Executing tool '{}' with args: {}", name, args);
                 executor.execute(args, context).await
             } else {
-                ToolResult::error(&id, format!("Tool '{}' not found", name))
+                ToolResult::error(&id, &name, format!("Tool '{}' not found", name))
             };
 
             // Send execution complete
@@ -454,13 +459,15 @@ impl ContentBlockBuilder {
             self.tool_call_name,
             self.tool_call_arguments,
         ) {
+            // Parse arguments string to Value for the new struct format
+            let args_value: Option<Value> = serde_json::from_str(&arguments).ok();
             Some(TzContentBlock::ToolCall(
                 balungpisah_tensorzero::ToolCallBlock {
                     id,
-                    name,
-                    arguments,
-                    raw_name: None,
-                    raw_arguments: None,
+                    name: Some(name.clone()),
+                    arguments: args_value,
+                    raw_name: Some(name),
+                    raw_arguments: Some(arguments),
                 },
             ))
         } else {
@@ -470,12 +477,15 @@ impl ContentBlockBuilder {
 }
 
 /// Extract tool calls from response content.
+/// Returns tuples of (id, name, arguments_string).
 fn extract_tool_calls(content: &[TzContentBlock]) -> Vec<(String, String, String)> {
     content
         .iter()
         .filter_map(|block| {
             if let TzContentBlock::ToolCall(tc) = block {
-                Some((tc.id.clone(), tc.name.clone(), tc.arguments.clone()))
+                let name = tc.tool_name().unwrap_or("unknown").to_string();
+                let args = tc.arguments_string();
+                Some((tc.id.clone(), name, args))
             } else {
                 None
             }
@@ -510,8 +520,9 @@ fn response_content_to_message_content(content: &[TzContentBlock]) -> MessageCon
         .map(|block| match block {
             TzContentBlock::Text { text } => ContentBlock::text(text),
             TzContentBlock::ToolCall(tc) => {
-                let input: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
-                ContentBlock::tool_use(&tc.id, &tc.name, input)
+                let input: Value = tc.parse_arguments().unwrap_or(Value::Null);
+                let name = tc.tool_name().unwrap_or("unknown");
+                ContentBlock::tool_use(&tc.id, name, input)
             }
         })
         .collect();
@@ -532,11 +543,13 @@ fn response_to_input_message(content: &[TzContentBlock]) -> InputMessage {
                 });
             }
             TzContentBlock::ToolCall(tc) => {
+                let name = tc.tool_name().unwrap_or("unknown").to_string();
+                let args = tc.parse_arguments().unwrap_or(Value::Null);
                 input_blocks.push(balungpisah_tensorzero::InputContentBlock::ToolCall {
                     r#type: "tool_call".to_string(),
                     id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
+                    name,
+                    arguments: args,
                 });
             }
         }
@@ -554,9 +567,9 @@ fn tool_results_to_message(thread_id: Uuid, results: &[ToolResult]) -> Message {
         .iter()
         .map(|r| {
             if r.is_error {
-                ContentBlock::tool_error(&r.tool_call_id, &r.content)
+                ContentBlock::tool_error(&r.tool_call_id, &r.tool_name, &r.content)
             } else {
-                ContentBlock::tool_result(&r.tool_call_id, &r.content)
+                ContentBlock::tool_result(&r.tool_call_id, &r.tool_name, &r.content)
             }
         })
         .collect();

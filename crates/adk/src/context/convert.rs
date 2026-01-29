@@ -39,15 +39,17 @@ fn convert_content_block(block: &ContentBlock) -> Option<InputContentBlock> {
             r#type: "tool_call".to_string(),
             id: id.clone(),
             name: name.clone(),
-            arguments: serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string()),
+            arguments: input.clone(),
         }),
         ContentBlock::ToolResult {
             tool_use_id,
+            name,
             content,
             is_error: _,
         } => Some(InputContentBlock::ToolResult {
             r#type: "tool_result".to_string(),
             id: tool_use_id.clone(),
+            name: name.clone(),
             result: content.clone(),
         }),
         ContentBlock::Image { .. } => {
@@ -67,8 +69,9 @@ pub fn convert_response_to_message_content(
         .map(|block| match block {
             balungpisah_tensorzero::ContentBlock::Text { text } => ContentBlock::text(text),
             balungpisah_tensorzero::ContentBlock::ToolCall(tc) => {
-                let input = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
-                ContentBlock::tool_use(&tc.id, &tc.name, input)
+                let input = tc.parse_arguments().unwrap_or(serde_json::Value::Null);
+                let name = tc.tool_name().unwrap_or("unknown");
+                ContentBlock::tool_use(&tc.id, name, input)
             }
         })
         .collect();
@@ -119,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_convert_tool_result_message() {
-        let blocks = vec![ContentBlock::tool_result("call_123", "Sunny, 72°F")];
+        let blocks = vec![ContentBlock::tool_result("call_123", "get_weather", "Sunny, 72°F")];
         let message = Message::new(Uuid::new_v4(), Role::User, MessageContent::Blocks(blocks));
 
         let input = convert_message_to_input(&message);
