@@ -120,16 +120,26 @@ impl ToolResultMessageBuilder {
     }
 
     /// Add a tool result.
-    pub fn result(mut self, tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn result(
+        mut self,
+        tool_use_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         self.results
-            .push(ContentBlock::tool_result(tool_use_id, content));
+            .push(ContentBlock::tool_result(tool_use_id, tool_name, content));
         self
     }
 
     /// Add an error result.
-    pub fn error(mut self, tool_use_id: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn error(
+        mut self,
+        tool_use_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         self.results
-            .push(ContentBlock::tool_error(tool_use_id, error));
+            .push(ContentBlock::tool_error(tool_use_id, tool_name, error));
         self
     }
 

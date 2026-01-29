@@ -26,7 +26,7 @@
 //!         .and_then(|v| v.as_str())
 //!         .unwrap_or("unknown");
 //!
-//!     ToolResult::success(&ctx.tool_call_id, format!("Weather in {}: Sunny, 72°F", location))
+//!     ToolResult::success(&ctx.tool_call_id, &ctx.tool_name, format!("Weather in {}: Sunny, 72°F", location))
 //! });
 //! ```
 

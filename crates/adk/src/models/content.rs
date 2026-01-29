@@ -24,6 +24,8 @@ pub enum ContentBlock {
     ToolResult {
         /// ID of the tool use this is responding to.
         tool_use_id: String,
+        /// Name of the tool.
+        name: String,
         /// Result content.
         content: String,
         /// Whether the tool execution failed.
@@ -54,18 +56,28 @@ impl ContentBlock {
     }
 
     /// Create a tool result content block.
-    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn tool_result(
+        tool_use_id: impl Into<String>,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self::ToolResult {
             tool_use_id: tool_use_id.into(),
+            name: name.into(),
             content: content.into(),
             is_error: false,
         }
     }
 
     /// Create an error tool result content block.
-    pub fn tool_error(tool_use_id: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn tool_error(
+        tool_use_id: impl Into<String>,
+        name: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         Self::ToolResult {
             tool_use_id: tool_use_id.into(),
+            name: name.into(),
             content: error.into(),
             is_error: true,
         }

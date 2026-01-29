@@ -8,6 +8,8 @@ use serde_json::Value;
 pub struct ToolResult {
     /// ID of the tool call this result is for.
     pub tool_call_id: String,
+    /// Name of the tool that was called.
+    pub tool_name: String,
     /// The result content.
     pub content: String,
     /// Whether the execution was an error.
@@ -19,9 +21,14 @@ pub struct ToolResult {
 
 impl ToolResult {
     /// Create a successful result with string content.
-    pub fn success(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn success(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
             content: content.into(),
             is_error: false,
             data: None,
@@ -29,10 +36,15 @@ impl ToolResult {
     }
 
     /// Create a successful result with JSON data.
-    pub fn success_json(tool_call_id: impl Into<String>, data: Value) -> Self {
+    pub fn success_json(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        data: Value,
+    ) -> Self {
         let content = serde_json::to_string_pretty(&data).unwrap_or_else(|_| data.to_string());
         Self {
             tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
             content,
             is_error: false,
             data: Some(data),
@@ -40,9 +52,14 @@ impl ToolResult {
     }
 
     /// Create an error result.
-    pub fn error(tool_call_id: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn error(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         Self {
             tool_call_id: tool_call_id.into(),
+            tool_name: tool_name.into(),
             content: error.into(),
             is_error: true,
             data: None,
@@ -50,8 +67,12 @@ impl ToolResult {
     }
 
     /// Create an error result from an Error trait object.
-    pub fn from_error<E: std::error::Error>(tool_call_id: impl Into<String>, error: E) -> Self {
-        Self::error(tool_call_id, error.to_string())
+    pub fn from_error<E: std::error::Error>(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        error: E,
+    ) -> Self {
+        Self::error(tool_call_id, tool_name, error.to_string())
     }
 
     /// Add structured data to the result.
@@ -76,7 +97,11 @@ impl ToolResult {
 /// Extension trait for converting Result types to ToolResult.
 pub trait IntoToolResult {
     /// Convert to a ToolResult.
-    fn into_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult;
+    fn into_tool_result(
+        self,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+    ) -> ToolResult;
 }
 
 impl<T, E> IntoToolResult for Result<T, E>
@@ -84,28 +109,44 @@ where
     T: std::fmt::Display,
     E: std::error::Error,
 {
-    fn into_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
+    fn into_tool_result(
+        self,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+    ) -> ToolResult {
         match self {
-            Ok(value) => ToolResult::success(tool_call_id, value.to_string()),
-            Err(error) => ToolResult::from_error(tool_call_id, error),
+            Ok(value) => ToolResult::success(tool_call_id, tool_name, value.to_string()),
+            Err(error) => ToolResult::from_error(tool_call_id, tool_name, error),
         }
     }
 }
 
 impl IntoToolResult for Value {
-    fn into_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
-        ToolResult::success_json(tool_call_id, self)
+    fn into_tool_result(
+        self,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+    ) -> ToolResult {
+        ToolResult::success_json(tool_call_id, tool_name, self)
     }
 }
 
 impl IntoToolResult for String {
-    fn into_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
-        ToolResult::success(tool_call_id, self)
+    fn into_tool_result(
+        self,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+    ) -> ToolResult {
+        ToolResult::success(tool_call_id, tool_name, self)
     }
 }
 
 impl IntoToolResult for &str {
-    fn into_tool_result(self, tool_call_id: impl Into<String>) -> ToolResult {
-        ToolResult::success(tool_call_id, self)
+    fn into_tool_result(
+        self,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+    ) -> ToolResult {
+        ToolResult::success(tool_call_id, tool_name, self)
     }
 }
