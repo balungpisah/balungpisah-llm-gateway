@@ -57,6 +57,58 @@ fn convert_content_block(block: &ContentBlock) -> Option<InputContentBlock> {
             // Could be converted to base64 data URLs if needed
             None
         }
+        ContentBlock::File {
+            file_id,
+            url,
+            mime_type,
+            data,
+        } => {
+            // Convert file blocks to appropriate format
+            // Priority: URL > base64 data > file_id reference
+            if let Some(url) = url {
+                // If we have a URL, check if it's an image
+                let is_image = mime_type
+                    .as_ref()
+                    .map(|m| m.starts_with("image/"))
+                    .unwrap_or(false);
+
+                if is_image {
+                    // For images with URL, include as text with URL reference
+                    // TensorZero may support image URLs directly in the future
+                    Some(InputContentBlock::Text {
+                        r#type: "text".to_string(),
+                        text: format!("[Image: {}]", url),
+                    })
+                } else {
+                    // For non-image files, include as text with URL reference
+                    Some(InputContentBlock::Text {
+                        r#type: "text".to_string(),
+                        text: format!("[File: {}]", url),
+                    })
+                }
+            } else if let (Some(_data), Some(mime)) = (data, mime_type) {
+                // If we have base64 data and it's an image, we could potentially
+                // convert to a data URL, but for now we'll note it as attached
+                if mime.starts_with("image/") {
+                    Some(InputContentBlock::Text {
+                        r#type: "text".to_string(),
+                        text: format!("[Attached image: {}]", mime),
+                    })
+                } else {
+                    Some(InputContentBlock::Text {
+                        r#type: "text".to_string(),
+                        text: format!("[Attached file: {}]", mime),
+                    })
+                }
+            } else {
+                // If we only have a file_id, reference it
+                // The URL should be resolved before sending to the model
+                file_id.as_ref().map(|id| InputContentBlock::Text {
+                    r#type: "text".to_string(),
+                    text: format!("[File reference: {}]", id),
+                })
+            }
+        }
     }
 }
 
@@ -122,7 +174,11 @@ mod tests {
 
     #[test]
     fn test_convert_tool_result_message() {
-        let blocks = vec![ContentBlock::tool_result("call_123", "get_weather", "Sunny, 72°F")];
+        let blocks = vec![ContentBlock::tool_result(
+            "call_123",
+            "get_weather",
+            "Sunny, 72°F",
+        )];
         let message = Message::new(Uuid::new_v4(), Role::User, MessageContent::Blocks(blocks));
 
         let input = convert_message_to_input(&message);
