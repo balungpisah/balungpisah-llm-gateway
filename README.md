@@ -93,10 +93,45 @@ async fn main() -> Result<(), AgentError> {
 ## Requirements
 
 - Rust 1.75+
-- PostgreSQL 14+ (for storage)
-- TensorZero gateway instance
+- Docker and Docker Compose (for development environment)
 
-## Development
+## Development Setup
+
+### 1. Start the development services
+
+```bash
+# Copy environment variables
+cp .env.example .env
+
+# Start all services
+docker compose up -d
+```
+
+This starts:
+- **PostgreSQL** (TimescaleDB) on port 5432
+- **TensorZero Gateway** on port 3000
+- **TensorZero UI** on port 4000
+- **ClickHouse** on port 8123 (for TensorZero observability)
+
+### 2. Verify services are running
+
+```bash
+# Check service health
+docker compose ps
+
+# View logs
+docker compose logs -f
+```
+
+### 3. Access the services
+
+| Service | URL |
+|---------|-----|
+| PostgreSQL | `postgres://postgres:postgres@localhost:5432/agents` |
+| TensorZero Gateway | http://localhost:3000 |
+| TensorZero UI | http://localhost:4000 |
+
+### 4. Build and run
 
 ```bash
 # Build all crates
@@ -111,6 +146,26 @@ cargo fmt --check
 # Run clippy
 cargo clippy --workspace
 ```
+
+### Stop services
+
+```bash
+docker compose down
+
+# To also remove volumes (reset data)
+docker compose down -v
+```
+
+## Configuration
+
+The TensorZero configuration is in `config/tensorzero/tensorzero.toml`.
+
+**Dynamic API Keys**: All models use `api_key_location = "dynamic::system_api_key"`, meaning API keys are provided by ADK consumers at request time rather than configured in the gateway. This allows each consumer to use their own API keys.
+
+Customize the config to:
+- Add more functions/variants
+- Configure different models
+- Add metrics for observability
 
 ## License
 

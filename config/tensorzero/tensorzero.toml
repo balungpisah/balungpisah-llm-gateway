@@ -1,0 +1,131 @@
+# TensorZero Configuration for Development
+# See: https://www.tensorzero.com/docs/gateway/configuration
+#
+# API keys are provided dynamically by consumers via `api_key_location = "dynamic::system_api_key"`
+# This allows ADK users to use their own API keys at request time.
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                              MODEL CONFIGS                                 │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+# OpenAI Models
+[models."gpt-4o"]
+routing = ["openai"]
+[models."gpt-4o".providers.openai]
+type = "openai"
+model_name = "gpt-4o"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-4o-mini"]
+routing = ["openai"]
+[models."gpt-4o-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4o-mini"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-4.1"]
+routing = ["openai"]
+[models."gpt-4.1".providers.openai]
+type = "openai"
+model_name = "gpt-4.1"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-4.1-mini"]
+routing = ["openai"]
+[models."gpt-4.1-mini".providers.openai]
+type = "openai"
+model_name = "gpt-4.1-mini"
+api_key_location = "dynamic::system_api_key"
+
+[models."gpt-4.1-nano"]
+routing = ["openai"]
+[models."gpt-4.1-nano".providers.openai]
+type = "openai"
+model_name = "gpt-4.1-nano"
+api_key_location = "dynamic::system_api_key"
+
+# Anthropic Models
+[models."claude-sonnet-4-20250514"]
+routing = ["anthropic"]
+[models."claude-sonnet-4-20250514".providers.anthropic]
+type = "anthropic"
+model_name = "claude-sonnet-4-20250514"
+api_key_location = "dynamic::system_api_key"
+
+[models."claude-opus-4-20250514"]
+routing = ["anthropic"]
+[models."claude-opus-4-20250514".providers.anthropic]
+type = "anthropic"
+model_name = "claude-opus-4-20250514"
+api_key_location = "dynamic::system_api_key"
+
+[models."claude-haiku-3-5-20241022"]
+routing = ["anthropic"]
+[models."claude-haiku-3-5-20241022".providers.anthropic]
+type = "anthropic"
+model_name = "claude-3-5-haiku-20241022"
+api_key_location = "dynamic::system_api_key"
+
+# Google AI Studio Models
+[models."gemini-2.0-flash"]
+routing = ["google_ai_studio_gemini"]
+[models."gemini-2.0-flash".providers.google_ai_studio_gemini]
+type = "google_ai_studio_gemini"
+model_name = "gemini-2.0-flash"
+api_key_location = "dynamic::system_api_key"
+
+[models."gemini-2.5-flash"]
+routing = ["google_ai_studio_gemini"]
+[models."gemini-2.5-flash".providers.google_ai_studio_gemini]
+type = "google_ai_studio_gemini"
+model_name = "gemini-2.5-flash"
+api_key_location = "dynamic::system_api_key"
+
+[models."gemini-2.5-pro"]
+routing = ["google_ai_studio_gemini"]
+[models."gemini-2.5-pro".providers.google_ai_studio_gemini]
+type = "google_ai_studio_gemini"
+model_name = "gemini-2.5-pro"
+api_key_location = "dynamic::system_api_key"
+
+# xAI Models
+[models."grok-3"]
+routing = ["xai"]
+[models."grok-3".providers.xai]
+type = "xai"
+model_name = "grok-3"
+api_key_location = "dynamic::system_api_key"
+
+[models."grok-3-fast"]
+routing = ["xai"]
+[models."grok-3-fast".providers.xai]
+type = "xai"
+model_name = "grok-3-fast"
+api_key_location = "dynamic::system_api_key"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                             FUNCTION CONFIGS                              │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+# General chat function - default for agent conversations
+[functions.chat]
+type = "chat"
+
+[functions.chat.variants.baseline]
+type = "chat_completion"
+model = "gpt-4o-mini"
+max_tokens = 4096
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                METRICS                                     │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+[metrics.conversation_quality]
+level = "inference"
+optimize = "max"
+type = "float"
+
+[metrics.response_time]
+level = "inference"
+optimize = "min"
+type = "float"
