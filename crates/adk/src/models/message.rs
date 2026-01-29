@@ -74,8 +74,12 @@ impl Message {
     }
 
     /// Create a new assistant message.
+    ///
+    /// Assistant messages are always stored in blocks format for consistency.
+    /// A plain string will be converted to `[{"type": "text", "text": "..."}]`.
     pub fn assistant(thread_id: Uuid, content: impl Into<MessageContent>) -> Self {
-        Self::new(thread_id, Role::Assistant, content)
+        let normalized_content = content.into().into_blocks();
+        Self::new(thread_id, Role::Assistant, normalized_content)
     }
 
     /// Set the episode ID.
