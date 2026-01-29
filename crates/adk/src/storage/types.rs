@@ -1,8 +1,9 @@
 //! Storage trait definitions.
 
 use crate::error::StorageResult;
-use crate::models::{Message, Thread};
+use crate::models::{FileMetadata, Message, Thread};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Storage interface for thread operations.
@@ -69,9 +70,43 @@ pub trait MessageStorage: Send + Sync {
     async fn delete_messages_after(&self, thread_id: Uuid, after_id: Uuid) -> StorageResult<u64>;
 }
 
+/// Storage interface for file metadata operations.
+#[async_trait]
+pub trait FileMetadataStorage: Send + Sync {
+    /// Create a new file metadata entry.
+    async fn create_file(&self, file: &FileMetadata) -> StorageResult<()>;
+
+    /// Get file metadata by ID.
+    async fn get_file(&self, id: Uuid) -> StorageResult<Option<FileMetadata>>;
+
+    /// Update the presigned URL for a file.
+    async fn update_file_url(
+        &self,
+        id: Uuid,
+        url: String,
+        expires_at: DateTime<Utc>,
+    ) -> StorageResult<()>;
+
+    /// Delete file metadata.
+    async fn delete_file(&self, id: Uuid) -> StorageResult<()>;
+
+    /// List all files for a thread.
+    async fn list_thread_files(&self, thread_id: Uuid) -> StorageResult<Vec<FileMetadata>>;
+
+    /// List files for a specific message.
+    async fn list_message_files(&self, message_id: Uuid) -> StorageResult<Vec<FileMetadata>>;
+
+    /// Find a file by checksum within a thread (for deduplication).
+    async fn find_by_checksum(
+        &self,
+        thread_id: Uuid,
+        checksum: &str,
+    ) -> StorageResult<Option<FileMetadata>>;
+}
+
 /// Combined storage interface for convenience.
 #[async_trait]
-pub trait Storage: ThreadStorage + MessageStorage {
+pub trait Storage: ThreadStorage + MessageStorage + FileMetadataStorage {
     /// Run database migrations.
     async fn migrate(&self) -> StorageResult<()>;
 

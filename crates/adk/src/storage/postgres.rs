@@ -1,9 +1,10 @@
 //! PostgreSQL storage implementation.
 
 use crate::error::{StorageError, StorageResult};
-use crate::models::{Message, Role, Thread};
-use crate::storage::types::{MessageStorage, Storage, ThreadStorage};
+use crate::models::{FileMetadata, Message, Role, Thread};
+use crate::storage::types::{FileMetadataStorage, MessageStorage, Storage, ThreadStorage};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
@@ -506,6 +507,219 @@ impl MessageStorage for PostgresStorage {
         .await?;
 
         Ok(result.rows_affected())
+    }
+}
+
+#[async_trait]
+impl FileMetadataStorage for PostgresStorage {
+    #[instrument(skip(self, file), fields(file_id = %file.id, thread_id = %file.thread_id))]
+    async fn create_file(&self, file: &FileMetadata) -> StorageResult<()> {
+        debug!("Creating file metadata");
+
+        sqlx::query(
+            r#"
+            INSERT INTO files (
+                id, thread_id, message_id, filename, mime_type, size_bytes,
+                checksum, storage_bucket, storage_key, presigned_url, url_expires_at, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            "#,
+        )
+        .bind(file.id)
+        .bind(file.thread_id)
+        .bind(file.message_id)
+        .bind(&file.filename)
+        .bind(&file.mime_type)
+        .bind(file.size_bytes)
+        .bind(&file.checksum)
+        .bind(&file.storage_bucket)
+        .bind(&file.storage_key)
+        .bind(&file.presigned_url)
+        .bind(file.url_expires_at)
+        .bind(file.created_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn get_file(&self, id: Uuid) -> StorageResult<Option<FileMetadata>> {
+        debug!("Getting file metadata");
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, thread_id, message_id, filename, mime_type, size_bytes,
+                   checksum, storage_bucket, storage_key, presigned_url, url_expires_at, created_at
+            FROM files
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| FileMetadata {
+            id: r.get("id"),
+            thread_id: r.get("thread_id"),
+            message_id: r.get("message_id"),
+            filename: r.get("filename"),
+            mime_type: r.get("mime_type"),
+            size_bytes: r.get("size_bytes"),
+            checksum: r.get("checksum"),
+            storage_bucket: r.get("storage_bucket"),
+            storage_key: r.get("storage_key"),
+            presigned_url: r.get("presigned_url"),
+            url_expires_at: r.get("url_expires_at"),
+            created_at: r.get("created_at"),
+        }))
+    }
+
+    #[instrument(skip(self))]
+    async fn update_file_url(
+        &self,
+        id: Uuid,
+        url: String,
+        expires_at: DateTime<Utc>,
+    ) -> StorageResult<()> {
+        debug!("Updating file presigned URL");
+
+        sqlx::query(
+            r#"
+            UPDATE files
+            SET presigned_url = $2, url_expires_at = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(url)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn delete_file(&self, id: Uuid) -> StorageResult<()> {
+        debug!("Deleting file metadata");
+
+        sqlx::query("DELETE FROM files WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn list_thread_files(&self, thread_id: Uuid) -> StorageResult<Vec<FileMetadata>> {
+        debug!("Listing thread files");
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, thread_id, message_id, filename, mime_type, size_bytes,
+                   checksum, storage_bucket, storage_key, presigned_url, url_expires_at, created_at
+            FROM files
+            WHERE thread_id = $1
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| FileMetadata {
+                id: r.get("id"),
+                thread_id: r.get("thread_id"),
+                message_id: r.get("message_id"),
+                filename: r.get("filename"),
+                mime_type: r.get("mime_type"),
+                size_bytes: r.get("size_bytes"),
+                checksum: r.get("checksum"),
+                storage_bucket: r.get("storage_bucket"),
+                storage_key: r.get("storage_key"),
+                presigned_url: r.get("presigned_url"),
+                url_expires_at: r.get("url_expires_at"),
+                created_at: r.get("created_at"),
+            })
+            .collect())
+    }
+
+    #[instrument(skip(self))]
+    async fn list_message_files(&self, message_id: Uuid) -> StorageResult<Vec<FileMetadata>> {
+        debug!("Listing message files");
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, thread_id, message_id, filename, mime_type, size_bytes,
+                   checksum, storage_bucket, storage_key, presigned_url, url_expires_at, created_at
+            FROM files
+            WHERE message_id = $1
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(message_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| FileMetadata {
+                id: r.get("id"),
+                thread_id: r.get("thread_id"),
+                message_id: r.get("message_id"),
+                filename: r.get("filename"),
+                mime_type: r.get("mime_type"),
+                size_bytes: r.get("size_bytes"),
+                checksum: r.get("checksum"),
+                storage_bucket: r.get("storage_bucket"),
+                storage_key: r.get("storage_key"),
+                presigned_url: r.get("presigned_url"),
+                url_expires_at: r.get("url_expires_at"),
+                created_at: r.get("created_at"),
+            })
+            .collect())
+    }
+
+    #[instrument(skip(self))]
+    async fn find_by_checksum(
+        &self,
+        thread_id: Uuid,
+        checksum: &str,
+    ) -> StorageResult<Option<FileMetadata>> {
+        debug!("Finding file by checksum");
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, thread_id, message_id, filename, mime_type, size_bytes,
+                   checksum, storage_bucket, storage_key, presigned_url, url_expires_at, created_at
+            FROM files
+            WHERE thread_id = $1 AND checksum = $2
+            LIMIT 1
+            "#,
+        )
+        .bind(thread_id)
+        .bind(checksum)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| FileMetadata {
+            id: r.get("id"),
+            thread_id: r.get("thread_id"),
+            message_id: r.get("message_id"),
+            filename: r.get("filename"),
+            mime_type: r.get("mime_type"),
+            size_bytes: r.get("size_bytes"),
+            checksum: r.get("checksum"),
+            storage_bucket: r.get("storage_bucket"),
+            storage_key: r.get("storage_key"),
+            presigned_url: r.get("presigned_url"),
+            url_expires_at: r.get("url_expires_at"),
+            created_at: r.get("created_at"),
+        }))
     }
 }
 
