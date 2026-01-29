@@ -110,25 +110,34 @@ where
     /// This is used for the "edit and resubmit" workflow.
     /// Returns the number of messages deleted.
     pub async fn delete_messages_after(&self, thread_id: Uuid, after_id: Uuid) -> Result<u64> {
-        Ok(self.storage.delete_messages_after(thread_id, after_id).await?)
+        Ok(self
+            .storage
+            .delete_messages_after(thread_id, after_id)
+            .await?)
     }
 
     /// Chat with the agent (non-streaming).
     ///
     /// This method sends a message and waits for the complete response,
     /// including any tool execution loops.
-    #[instrument(skip(self, message), fields(thread_id = %thread_id))]
-    pub async fn chat(&self, thread_id: Uuid, message: impl Into<String>) -> Result<ChatResponse> {
+    ///
+    /// Accepts either a simple string or structured `MessageContent` for multimodal input.
+    #[instrument(skip(self, content), fields(thread_id = %thread_id))]
+    pub async fn chat(
+        &self,
+        thread_id: Uuid,
+        content: impl Into<MessageContent>,
+    ) -> Result<ChatResponse> {
         let thread = self
             .storage
             .get_thread(thread_id)
             .await?
             .ok_or(AgentError::ThreadNotFound { thread_id })?;
 
-        let user_message = message.into();
+        let message_content = content.into();
 
         // Save user message
-        let user_msg = Message::user(thread_id, user_message.clone());
+        let user_msg = Message::user(thread_id, message_content);
         self.storage.create_message(&user_msg).await?;
 
         // Get context messages
@@ -202,8 +211,8 @@ where
 
                 // Save assistant message
                 let content = convert_response_to_message_content(&response.content);
-                let assistant_msg = Message::assistant(thread.id, content)
-                    .with_episode_id(response.episode_id);
+                let assistant_msg =
+                    Message::assistant(thread.id, content).with_episode_id(response.episode_id);
                 self.storage.create_message(&assistant_msg).await?;
 
                 return Ok(ChatResponse {
@@ -217,8 +226,8 @@ where
 
             // Save assistant message with tool calls
             let content = convert_response_to_message_content(&response.content);
-            let assistant_msg = Message::assistant(thread.id, content)
-                .with_episode_id(response.episode_id);
+            let assistant_msg =
+                Message::assistant(thread.id, content).with_episode_id(response.episode_id);
             self.storage.create_message(&assistant_msg).await?;
 
             // Add assistant response to context
@@ -326,11 +335,13 @@ where
     /// Chat with streaming response.
     ///
     /// Returns a channel receiver that will emit SSE events as they occur.
-    #[instrument(skip(self, message), fields(thread_id = %thread_id))]
+    ///
+    /// Accepts either a simple string or structured `MessageContent` for multimodal input.
+    #[instrument(skip(self, content), fields(thread_id = %thread_id))]
     pub async fn chat_stream(
         &self,
         thread_id: Uuid,
-        message: impl Into<String>,
+        content: impl Into<MessageContent>,
     ) -> Result<mpsc::Receiver<SseEvent>> {
         let thread = self
             .storage
@@ -339,7 +350,7 @@ where
             .ok_or(AgentError::ThreadNotFound { thread_id })?;
 
         let thread = Arc::new(thread);
-        let user_message = message.into();
+        let message_content = content.into();
 
         let (tx, rx) = mpsc::channel(self.stream_config.buffer_size);
 
@@ -365,7 +376,7 @@ where
 
         // Spawn execution task
         tokio::spawn(async move {
-            if let Err(e) = executor.execute(thread, &user_message, tx.clone()).await {
+            if let Err(e) = executor.execute(thread, message_content, tx.clone()).await {
                 let _ = tx.send(SseEvent::error(e.to_string())).await;
             }
         });

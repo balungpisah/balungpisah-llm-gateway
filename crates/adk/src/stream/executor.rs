@@ -95,15 +95,17 @@ where
     }
 
     /// Execute a chat request with streaming.
-    #[instrument(skip(self, sender), fields(thread_id = %thread.id))]
+    ///
+    /// Accepts either a simple string or structured `MessageContent` for multimodal input.
+    #[instrument(skip(self, sender, content), fields(thread_id = %thread.id))]
     pub async fn execute(
         &self,
         thread: Arc<Thread>,
-        user_message: &str,
+        content: impl Into<MessageContent>,
         sender: mpsc::Sender<SseEvent>,
     ) -> Result<()> {
         // Save user message
-        let user_msg = Message::user(thread.id, user_message);
+        let user_msg = Message::user(thread.id, content.into());
         self.storage.create_message(&user_msg).await?;
 
         // Build context messages
@@ -288,11 +290,15 @@ where
             }
             ContentBlockType::ToolCall(tc) => {
                 // Get name from raw_name or name field
-                let name = tc.raw_name.clone()
+                let name = tc
+                    .raw_name
+                    .clone()
                     .or_else(|| tc.name.clone())
                     .unwrap_or_default();
                 // Get arguments from raw_arguments or arguments field
-                let args = tc.raw_arguments.clone()
+                let args = tc
+                    .raw_arguments
+                    .clone()
                     .or_else(|| tc.arguments.clone())
                     .unwrap_or_default();
                 blocks.insert(
