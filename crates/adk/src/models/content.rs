@@ -164,6 +164,21 @@ impl ContentBlock {
             _ => None,
         }
     }
+
+    /// Get the tool result details if this is a tool result block.
+    ///
+    /// Returns (tool_use_id, name, content, is_error).
+    pub fn as_tool_result(&self) -> Option<(&str, &str, &str, bool)> {
+        match self {
+            Self::ToolResult {
+                tool_use_id,
+                name,
+                content,
+                is_error,
+            } => Some((tool_use_id, name, content, *is_error)),
+            _ => None,
+        }
+    }
 }
 
 /// Image source specification.
@@ -254,6 +269,14 @@ impl MessageContent {
         match self {
             Self::Text(_) => vec![],
             Self::Blocks(blocks) => blocks.iter().filter(|b| b.is_tool_use()).collect(),
+        }
+    }
+
+    /// Check if this content contains any tool results.
+    pub fn has_tool_results(&self) -> bool {
+        match self {
+            Self::Text(_) => false,
+            Self::Blocks(blocks) => blocks.iter().any(|b| b.is_tool_result()),
         }
     }
 }

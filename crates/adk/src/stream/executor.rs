@@ -5,7 +5,7 @@ use super::events::{generate_block_id, generate_message_id, SseEvent};
 use crate::agent::ModelSpec;
 use crate::context::ContextConfig;
 use crate::error::{AgentError, Result};
-use crate::models::{ContentBlock, Message, MessageContent, Role, Thread};
+use crate::models::{ContentBlock, Message, MessageContent, Thread};
 use crate::storage::{MessageStorage, ThreadStorage};
 use crate::tools::{ToolContext, ToolRegistry, ToolResult};
 use balungpisah_tensorzero::{
@@ -190,6 +190,10 @@ where
     }
 
     /// Execute with existing messages (for tool result continuations).
+    ///
+    /// This method implements unified message storage: all content from the tool execution
+    /// loop (tool_use, tool_result, text) is accumulated and saved as a single assistant
+    /// message with one episode_id at the end of the loop.
     async fn execute_loop(
         &self,
         thread: Arc<Thread>,
@@ -206,6 +210,10 @@ where
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
 
+        // Unified storage: capture episode_id from first inference and accumulate all blocks
+        let mut loop_episode_id: Option<Uuid> = None;
+        let mut accumulated_blocks: Vec<ContentBlock> = Vec::new();
+
         loop {
             iteration += 1;
 
@@ -218,6 +226,7 @@ where
                     ),
                 )
                 .await;
+                // Don't save partial content on max iterations exceeded
                 return Err(AgentError::MaxIterationsExceeded {
                     max: self.max_iterations,
                 });
@@ -268,6 +277,12 @@ where
                 request_builder = request_builder.parallel_tool_calls(parallel);
             }
 
+            // Pass episode_id from first iteration to subsequent requests
+            // This ensures all inferences in the loop share the same episode
+            if let Some(eid) = loop_episode_id {
+                request_builder = request_builder.episode_id(eid);
+            }
+
             let request = request_builder.build()?;
 
             // Stream the response
@@ -282,6 +297,16 @@ where
                 )
                 .await?;
 
+            // Capture episode_id from first iteration only
+            if loop_episode_id.is_none() {
+                loop_episode_id = Some(episode_id);
+            }
+
+            // Accumulate response content blocks
+            for block in &response_content {
+                accumulated_blocks.push(convert_tz_to_content_block(block));
+            }
+
             // Accumulate usage
             total_input_tokens += chunk_usage.0;
             total_output_tokens += chunk_usage.1;
@@ -290,14 +315,12 @@ where
             let tool_calls = extract_tool_calls(&response_content);
 
             if tool_calls.is_empty() {
-                // No tool calls - we're done
-                // Save assistant message
-                let assistant_msg = Message::assistant(
-                    thread.id,
-                    response_content_to_message_content(&response_content),
-                )
-                .with_episode_id(episode_id);
-                self.storage.create_message(&assistant_msg).await?;
+                // No tool calls - loop complete
+                // Save unified assistant message with all accumulated content
+                let unified_msg =
+                    Message::assistant(thread.id, MessageContent::Blocks(accumulated_blocks))
+                        .with_episode_id(loop_episode_id.unwrap_or(episode_id));
+                self.storage.create_message(&unified_msg).await?;
 
                 // Emit message.usage
                 send_sse(
@@ -325,15 +348,7 @@ where
                 return Ok(());
             }
 
-            // Save assistant message with tool calls
-            let assistant_msg = Message::assistant(
-                thread.id,
-                response_content_to_message_content(&response_content),
-            )
-            .with_episode_id(episode_id);
-            self.storage.create_message(&assistant_msg).await?;
-
-            // Add assistant message to context
+            // Add assistant message to context for next iteration (not saving to storage yet)
             messages.push(response_to_input_message(&response_content));
 
             // Execute tools
@@ -347,9 +362,22 @@ where
                 )
                 .await;
 
-            // Save tool results as user message
-            let tool_result_msg = tool_results_to_message(thread.id, &tool_results);
-            self.storage.create_message(&tool_result_msg).await?;
+            // Accumulate tool results (not saving as separate message)
+            for result in &tool_results {
+                accumulated_blocks.push(if result.is_error {
+                    ContentBlock::tool_error(
+                        &result.tool_call_id,
+                        &result.tool_name,
+                        &result.content,
+                    )
+                } else {
+                    ContentBlock::tool_result(
+                        &result.tool_call_id,
+                        &result.tool_name,
+                        &result.content,
+                    )
+                });
+            }
 
             // Add tool results to context for next iteration
             for result in &tool_results {
@@ -923,6 +951,18 @@ impl ContentBlockBuilder {
     }
 }
 
+/// Convert TensorZero content block to our ContentBlock type.
+fn convert_tz_to_content_block(block: &TzContentBlock) -> ContentBlock {
+    match block {
+        TzContentBlock::Text { text } => ContentBlock::text(text),
+        TzContentBlock::ToolCall(tc) => {
+            let name = tc.tool_name().unwrap_or("unknown");
+            let input = tc.parse_arguments().unwrap_or(Value::Null);
+            ContentBlock::tool_use(&tc.id, name, input)
+        }
+    }
+}
+
 /// Extract tool calls from response content.
 /// Returns tuples of (block_id, tool_call_id, name, arguments_string).
 fn extract_tool_calls(content: &[TzContentBlock]) -> Vec<(String, String, String, String)> {
@@ -939,23 +979,6 @@ fn extract_tool_calls(content: &[TzContentBlock]) -> Vec<(String, String, String
             }
         })
         .collect()
-}
-
-/// Convert TensorZero content blocks to message content.
-fn response_content_to_message_content(content: &[TzContentBlock]) -> MessageContent {
-    let blocks: Vec<ContentBlock> = content
-        .iter()
-        .map(|block| match block {
-            TzContentBlock::Text { text } => ContentBlock::text(text),
-            TzContentBlock::ToolCall(tc) => {
-                let input: Value = tc.parse_arguments().unwrap_or(Value::Null);
-                let name = tc.tool_name().unwrap_or("unknown");
-                ContentBlock::tool_use(&tc.id, name, input)
-            }
-        })
-        .collect();
-
-    MessageContent::Blocks(blocks)
 }
 
 /// Convert response content to input message for next iteration.
@@ -986,30 +1009,5 @@ fn response_to_input_message(content: &[TzContentBlock]) -> InputMessage {
     InputMessage {
         role: balungpisah_tensorzero::MessageRole::Assistant,
         content: input_blocks,
-    }
-}
-
-/// Convert tool results to a user message.
-fn tool_results_to_message(thread_id: Uuid, results: &[ToolResult]) -> Message {
-    let blocks: Vec<ContentBlock> = results
-        .iter()
-        .map(|r| {
-            if r.is_error {
-                ContentBlock::tool_error(&r.tool_call_id, &r.tool_name, &r.content)
-            } else {
-                ContentBlock::tool_result(&r.tool_call_id, &r.tool_name, &r.content)
-            }
-        })
-        .collect();
-
-    let now = chrono::Utc::now();
-    Message {
-        id: Uuid::now_v7(),
-        thread_id,
-        role: Role::User,
-        content: MessageContent::Blocks(blocks),
-        episode_id: None,
-        created_at: now,
-        updated_at: now,
     }
 }
